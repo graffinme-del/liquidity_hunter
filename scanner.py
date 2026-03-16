@@ -35,7 +35,10 @@ def _dedup_key(signal: dict) -> tuple:
     return (signal.get("symbol", ""), signal.get("direction", ""))
 
 
-async def run_tick(client: BinanceClient, last_signal: dict, last_signal_at: float) -> tuple[Optional[dict], float]:
+async def run_tick(
+    client: BinanceClient,
+    last_sent: dict[str, float],
+) -> tuple[Optional[dict], float]:
     symbols = await client.get_top_symbols(config.UNIVERSE_TOP_N)
     if not symbols:
         return None, last_signal_at
@@ -87,13 +90,12 @@ async def run_tick(client: BinanceClient, last_signal: dict, last_signal_at: flo
             continue
 
     if not candidates:
-        return None, last_signal_at
+        return None, 0.0
 
     best = max(candidates, key=lambda c: c.get("score", 0))
-
-    if last_signal and _dedup_key(best) == _dedup_key(last_signal):
-        if now - last_signal_at < config.DEDUP_MINUTES * 60:
-            return None, last_signal_at
+    key = _dedup_key(best)
+    if key in last_sent and now - last_sent[key] < config.DEDUP_MINUTES * 60:
+        return None, 0.0
 
     return best, now
 
@@ -102,8 +104,7 @@ async def run_scanner():
     from dotenv import load_dotenv
     load_dotenv()
 
-    last_signal: Optional[dict] = None
-    last_signal_at: float = 0
+    last_sent: dict[tuple, float] = {}
 
     async with aiohttp.ClientSession() as session:
         client = BinanceClient(session)
@@ -111,13 +112,18 @@ async def run_scanner():
 
         while True:
             try:
-                winner, ts = await run_tick(client, last_signal, last_signal_at)
+                winner, _ = await run_tick(client, last_sent)
                 if winner:
                     text = format_signal(winner)
                     print(f"\n[СИГНАЛ]\n{text}\n")
                     await send_telegram(text)
-                    last_signal = winner
-                    last_signal_at = ts
+                    now = time.time()
+                    last_sent[_dedup_key(winner)] = now
+                    # Очистка старых записей
+                    cutoff = now - config.DEDUP_MINUTES * 60
+                    for k in list(last_sent.keys()):
+                        if last_sent[k] < cutoff:
+                            del last_sent[k]
             except Exception as e:
                 print(f"[SCANNER] Ошибка тика: {e}")
 

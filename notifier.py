@@ -24,7 +24,7 @@ def format_signal(signal: dict) -> str:
     atr_pct = signal.get("atr_pct_1h") or 0
 
     emoji = "🟢" if direction == "LONG" else "🔴"
-    action = "покупай" if direction == "LONG" else "продавай"
+    side = "покупку" if direction == "LONG" else "продажу"
 
     tp_low = min(tp_zone) if isinstance(tp_zone, (list, tuple)) else tp_zone
     tp_high = max(tp_zone) if isinstance(tp_zone, (list, tuple)) else tp_zone
@@ -34,7 +34,7 @@ def format_signal(signal: dict) -> str:
         "",
         f"Почему: {reason}",
         "",
-        f"Вход: когда цена достигнет {_fmt(trigger)} — {action} по рынку",
+        f"Отложенный ордер: STOP на {side}, триггер {_fmt(trigger)}",
         f"Стоп: {_fmt(stop)} — тренд сломается, если цена уйдёт туда",
         f"Цель: зона {_fmt(tp_low)}–{_fmt(tp_high)} — туда вероятно дойдёт",
         "",
@@ -48,10 +48,12 @@ def _fmt(x: Any) -> str:
         v = float(x)
         if v >= 1000:
             return f"{v:,.0f}"
-        if v >= 1:
+        if v >= 100:
             return f"{v:,.2f}"
+        if v >= 1:
+            return f"{v:.4f}"  # 1.4325 вместо 1.43
         if v >= 0.01:
             return f"{v:.4f}"
-        return f"{v:.6f}"  # для низких цен (0.0055 и т.п.)
+        return f"{v:.6f}"
     except (TypeError, ValueError):
         return str(x)
