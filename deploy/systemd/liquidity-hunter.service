@@ -10,6 +10,7 @@ ExecStart=/home/pulse/liquidity_hunter/venv/bin/python main.py
 Restart=always
 RestartSec=10
 Environment=PATH=/home/pulse/liquidity_hunter/venv/bin
+Environment=PYTHONUNBUFFERED=1
 EnvironmentFile=-/home/pulse/liquidity_hunter/.env
 
 [Install]
