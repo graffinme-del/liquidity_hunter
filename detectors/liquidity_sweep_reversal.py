@@ -1,0 +1,140 @@
+"""
+liquidity_sweep_reversal: вынос high/low + возврат внутрь → вход в сторону возврата.
+"""
+from typing import Optional
+
+import config
+from structure import (
+    atr_pct,
+    compute_tp_zone_long,
+    compute_tp_zone_short,
+    ema20,
+    structural_sl_long,
+    structural_sl_short,
+)
+
+
+def _to_float(x, default: float = 0.0) -> float:
+    try:
+        return float(x)
+    except (TypeError, ValueError):
+        return default
+
+
+def detect(
+    symbol: str,
+    candles_15m: list[dict],
+    candles_1h: list[dict],
+    atr_pct_1h: Optional[float],
+) -> Optional[dict]:
+    """
+    Возвращает кандидат или None.
+    Кандидат: strategy, direction, trigger_price, entry, stop, tp_zone, reason_ru, score, rr
+    """
+    if len(candles_15m) < config.SWEEP_MIN_CANDLES:
+        return None
+
+    if atr_pct_1h is not None and atr_pct_1h < config.ATR_MIN_PCT_1H:
+        return None
+
+    last = candles_15m[-1]
+    prev_range = candles_15m[-config.SWEEP_LOOKBACK - 1 : -1]
+
+    high = _to_float(last.get("high"))
+    low = _to_float(last.get("low"))
+    close = _to_float(last.get("close"))
+    open_ = _to_float(last.get("open"))
+
+    prev_high = max(_to_float(c.get("high")) for c in prev_range) if prev_range else high
+    prev_low = min(_to_float(c.get("low")) for c in prev_range) if prev_range else low
+
+    body = abs(close - open_)
+    rng = high - low
+    if rng <= 0:
+        return None
+
+    wick_up = high - max(open_, close)
+    wick_down = min(open_, close) - low
+
+    atr_15m = atr_pct(candles_15m, 14)
+    atr_val = (close * (atr_15m or 0) / 100) if atr_15m else (rng * 1.5)
+    ema_val = ema20(candles_15m)
+
+    # SHORT sweep
+    if high > prev_high and close < prev_high and wick_up >= body * config.SWEEP_MIN_WICK_TO_BODY:
+        entry = close
+        sweep_high = high * 1.002
+        stop = structural_sl_short(candles_15m, high, ema_val)
+        risk = stop - entry
+        if risk <= 0:
+            return None
+
+        structural_tp = None  # для SHORT — swing low ниже
+        from structure import nearest_swing_low_below
+        structural_tp = nearest_swing_low_below(candles_15m, entry)
+        tp_zone = compute_tp_zone_short(entry, stop, config.SWEEP_RR_TARGET, atr_val, structural_tp)
+
+        score = config.SWEEP_BASE_SCORE
+        if atr_pct_1h and atr_pct_1h > config.ATR_PUMP_BONUS_PCT:
+            score += 10
+
+        vol_last = _to_float(last.get("volume", 0))
+        vol_avg = sum(_to_float(c.get("volume", 0)) for c in candles_15m[-21:-1]) / 20 if len(candles_15m) >= 21 else vol_last
+        if vol_avg > 0 and vol_last >= vol_avg * 1.5:
+            score += 10
+
+        rr = (entry - (tp_zone[0] + tp_zone[1]) / 2) / risk if risk > 0 else 0
+
+        return {
+            "strategy": "liquidity_sweep_reversal",
+            "symbol": symbol,
+            "direction": "SHORT",
+            "trigger_price": entry,
+            "entry": entry,
+            "stop": stop,
+            "tp_zone": tp_zone,
+            "reason_ru": "Цена вынесла хай, откатилась — ждём движение вниз",
+            "score": score,
+            "rr": rr,
+            "atr_pct_1h": atr_pct_1h,
+        }
+
+    # LONG sweep
+    if low < prev_low and close > prev_low and wick_down >= body * config.SWEEP_MIN_WICK_TO_BODY:
+        entry = close
+        sweep_low = low * 0.998
+        stop = structural_sl_long(candles_15m, low, ema_val)
+        risk = entry - stop
+        if risk <= 0:
+            return None
+
+        from structure import nearest_swing_high_above
+        structural_tp = nearest_swing_high_above(candles_15m, entry)
+        tp_zone = compute_tp_zone_long(entry, stop, config.SWEEP_RR_TARGET, atr_val, structural_tp)
+
+        score = config.SWEEP_BASE_SCORE
+        if atr_pct_1h and atr_pct_1h > config.ATR_PUMP_BONUS_PCT:
+            score += 10
+
+        vol_last = _to_float(last.get("volume", 0))
+        vol_avg = sum(_to_float(c.get("volume", 0)) for c in candles_15m[-21:-1]) / 20 if len(candles_15m) >= 21 else vol_last
+        if vol_avg > 0 and vol_last >= vol_avg * 1.5:
+            score += 10
+
+        rr = ((tp_zone[0] + tp_zone[1]) / 2 - entry) / risk if risk > 0 else 0
+
+        return {
+            "strategy": "liquidity_sweep_reversal",
+            "symbol": symbol,
+            "direction": "LONG",
+            "trigger_price": entry,
+            "entry": entry,
+            "stop": stop,
+            "tp_zone": tp_zone,
+            "reason_ru": "Цена вынесла лоу, вернулась внутрь — ждём отскок вверх",
+            "score": score,
+            "rr": rr,
+            "atr_pct_1h": atr_pct_1h,
+        }
+
+    return None
