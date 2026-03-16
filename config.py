@@ -2,6 +2,7 @@
 
 # Волатильность (ОБЯЗАТЕЛЬНЫЙ фильтр)
 ATR_MIN_PCT_1H = 0.25  # ниже — не торгуем
+MIN_PRICE = 0.01  # не торгуем пары с ценой ниже (микрокапы)
 ATR_PUMP_BONUS_PCT = 0.5  # выше — бонус к score (pump mode)
 VOLUME_LAST_MIN_RATIO = 0.6  # объём последней свечи ≥ avg × это
 UNIVERSE_TOP_N = 50  # топ по объёму 24h

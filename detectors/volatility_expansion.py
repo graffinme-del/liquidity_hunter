@@ -38,6 +38,8 @@ def detect(
         return None
 
     closed = candles_15m[:-1] if len(candles_15m) > 1 else candles_15m
+    if closed and _to_float(closed[-1].get("close")) < config.MIN_PRICE:
+        return None
     if len(closed) < config.EXP_ATR_LOOKBACK + config.EXP_ATR_COOLDOWN + 1:
         return None
 
@@ -95,7 +97,7 @@ def detect(
         entry = range_high
         stop = range_low
         risk = entry - stop
-        if risk <= 0:
+        if risk <= 0 or risk < entry * 0.002:
             return None
         structural_tp = nearest_swing_high_above(candles_15m, entry)
         tp_zone = compute_tp_zone_long(entry, stop, config.EXP_RR_MIN, atr_val, structural_tp, max_atr_mult=2.0)
@@ -105,7 +107,7 @@ def detect(
         entry = range_low
         stop = range_high
         risk = stop - entry
-        if risk <= 0:
+        if risk <= 0 or risk < entry * 0.002:
             return None
         structural_tp = nearest_swing_low_below(candles_15m, entry)
         tp_zone = compute_tp_zone_short(entry, stop, config.EXP_RR_MIN, atr_val, structural_tp, max_atr_mult=2.0)

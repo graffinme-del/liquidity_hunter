@@ -33,6 +33,10 @@ def detect(
         return None
 
     closed = candles_15m[:-1] if len(candles_15m) > 1 else candles_15m
+    last = closed[-1] if closed else {}
+    if _to_float(last.get("close")) < config.MIN_PRICE:
+        return None
+
     range_candles = closed[-config.CONT_RANGE_LOOKBACK:]
     range_high = max(_to_float(c.get("high")) for c in range_candles)
     range_low = min(_to_float(c.get("low")) for c in range_candles)
@@ -82,7 +86,7 @@ def detect(
         entry = close
         stop = min(range_low, fake_low) * 0.998
         risk = entry - stop
-        if risk <= 0:
+        if risk <= 0 or risk < entry * 0.002:
             return None
 
         structural_tp = nearest_swing_high_above(candles_15m, entry)
@@ -110,7 +114,7 @@ def detect(
         entry = close
         stop = max(range_high, fake_high) * 1.002
         risk = stop - entry
-        if risk <= 0:
+        if risk <= 0 or risk < entry * 0.002:
             return None
 
         structural_tp = nearest_swing_low_below(candles_15m, entry)

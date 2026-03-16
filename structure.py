@@ -109,32 +109,36 @@ def structural_sl_long(
     candles: list[dict],
     sweep_low: float,
     ema_val: Optional[float],
+    entry: float,
     buffer_pct: float = 0.002,
 ) -> float:
-    """SL для LONG: max(sweep_low, swing_low, EMA) — самый жёсткий (ближайший к entry)."""
+    """SL для LONG: max(sweep_low, swing_low, EMA) — самый жёсткий, но обязательно НИЖЕ entry."""
     candidates = [sweep_low * (1 - buffer_pct)]
     sw = find_swing_low(candles)
-    if sw and sw > sweep_low:
+    if sw and sweep_low < sw < entry:
         candidates.append(sw * (1 - buffer_pct))
-    if ema_val and ema_val > sweep_low:
+    if ema_val and sweep_low < ema_val < entry:
         candidates.append(ema_val * (1 - buffer_pct))
-    return max(c for c in candidates if c > 0)
+    valid = [c for c in candidates if 0 < c < entry]
+    return max(valid) if valid else sweep_low * (1 - buffer_pct)
 
 
 def structural_sl_short(
     candles: list[dict],
     sweep_high: float,
     ema_val: Optional[float],
+    entry: float,
     buffer_pct: float = 0.002,
 ) -> float:
-    """SL для SHORT: min(sweep_high, swing_high, EMA) — самый жёсткий."""
+    """SL для SHORT: min(sweep_high, swing_high, EMA) — самый жёсткий, но обязательно ВЫШЕ entry."""
     candidates = [sweep_high * (1 + buffer_pct)]
     sw = find_swing_high(candles)
-    if sw and sw < sweep_high:
+    if sw and entry < sw < sweep_high:
         candidates.append(sw * (1 + buffer_pct))
-    if ema_val and ema_val < sweep_high:
+    if ema_val and entry < ema_val < sweep_high:
         candidates.append(ema_val * (1 + buffer_pct))
-    return min(c for c in candidates if c > 0)
+    valid = [c for c in candidates if c > entry]
+    return min(valid) if valid else sweep_high * (1 + buffer_pct)
 
 
 def nearest_swing_high_above(candles: list[dict], entry: float, lookback: int = 2) -> Optional[float]:

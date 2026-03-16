@@ -38,11 +38,13 @@ def detect(
         return None
 
     last = candles_15m[-1]
+    close = _to_float(last.get("close"))
+    if close < config.MIN_PRICE:
+        return None
     prev_range = candles_15m[-config.SWEEP_LOOKBACK - 1 : -1]
 
     high = _to_float(last.get("high"))
     low = _to_float(last.get("low"))
-    close = _to_float(last.get("close"))
     open_ = _to_float(last.get("open"))
 
     prev_high = max(_to_float(c.get("high")) for c in prev_range) if prev_range else high
@@ -64,9 +66,9 @@ def detect(
     if high > prev_high and close < prev_high and wick_up >= body * config.SWEEP_MIN_WICK_TO_BODY:
         entry = close
         sweep_high = high * 1.002
-        stop = structural_sl_short(candles_15m, high, ema_val)
+        stop = structural_sl_short(candles_15m, high, ema_val, entry)
         risk = stop - entry
-        if risk <= 0:
+        if risk <= 0 or risk < entry * 0.002:
             return None
 
         structural_tp = None  # для SHORT — swing low ниже
@@ -103,9 +105,9 @@ def detect(
     if low < prev_low and close > prev_low and wick_down >= body * config.SWEEP_MIN_WICK_TO_BODY:
         entry = close
         sweep_low = low * 0.998
-        stop = structural_sl_long(candles_15m, low, ema_val)
+        stop = structural_sl_long(candles_15m, low, ema_val, entry)
         risk = entry - stop
-        if risk <= 0:
+        if risk <= 0 or risk < entry * 0.002:
             return None
 
         from structure import nearest_swing_high_above

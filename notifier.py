@@ -50,6 +50,8 @@ def _fmt(x: Any) -> str:
             return f"{v:,.0f}"
         if v >= 1:
             return f"{v:,.2f}"
-        return f"{v:.4f}"
+        if v >= 0.01:
+            return f"{v:.4f}"
+        return f"{v:.6f}"  # для низких цен (0.0055 и т.п.)
     except (TypeError, ValueError):
         return str(x)

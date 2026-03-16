@@ -55,6 +55,10 @@ async def run_tick(client: BinanceClient, last_signal: dict, last_signal_at: flo
                 continue
 
             last_candle = candles_15m[-1]
+            price = float(last_candle.get("close", 0) or 0)
+            if price < config.MIN_PRICE:
+                continue
+
             vol_last = float(last_candle.get("volume", 0) or 0)
             vol_avg = sum(float(c.get("volume", 0) or 0) for c in candles_15m[-21:-1]) / 20 if len(candles_15m) >= 21 else vol_last
             if vol_avg > 0 and vol_last < vol_avg * config.VOLUME_LAST_MIN_RATIO:
