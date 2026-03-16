@@ -4,7 +4,7 @@
 import asyncio
 import os
 import time
-from typing import Optional
+from datetime import datetime, timezone, timedelta
 
 import aiohttp
 
@@ -35,13 +35,23 @@ def _dedup_key(signal: dict) -> tuple:
     return (signal.get("symbol", ""), signal.get("direction", ""))
 
 
+def _is_trading_hours() -> bool:
+    # Europe/Moscow = UTC+3 (без DST с 2011)
+    moscow = timezone(timedelta(hours=3))
+    hour = datetime.now(moscow).hour
+    return config.TRADING_START_HOUR <= hour < config.TRADING_END_HOUR
+
+
 async def run_tick(
     client: BinanceClient,
     last_sent: dict[str, float],
 ) -> tuple[Optional[dict], float]:
+    if not _is_trading_hours():
+        return None, 0.0
+
     symbols = await client.get_top_symbols(config.UNIVERSE_TOP_N)
     if not symbols:
-        return None, last_signal_at
+        return None, 0.0
 
     candidates: list[dict] = []
     now = time.time()
@@ -113,7 +123,7 @@ async def run_scanner():
         while True:
             try:
                 winner, _ = await run_tick(client, last_sent)
-                if winner:
+                if winner and _is_trading_hours():
                     text = format_signal(winner)
                     print(f"\n[СИГНАЛ]\n{text}\n")
                     await send_telegram(text)

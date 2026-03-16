@@ -40,3 +40,7 @@ DEDUP_MINUTES = 60
 
 # Сканер
 TICK_INTERVAL_SEC = 60  # интервал тика
+
+# Часы работы (Москва, UTC+3)
+TRADING_START_HOUR = 9   # с 9:00
+TRADING_END_HOUR = 21    # до 21:00
