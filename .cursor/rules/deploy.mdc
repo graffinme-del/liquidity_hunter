@@ -1,0 +1,23 @@
+# Деплой Liquidity Hunter
+
+После изменений в коде — коммит **только локально**, затем обновление на сервере.
+
+## Локально (ПК)
+
+```bash
+cd c:\Users\job\Desktop\liquidity_hunter
+git add .
+git commit -m "краткое описание"
+git push origin master
+```
+
+## На сервере (SSH)
+
+```bash
+ssh user@server
+cd ~/liquidity_hunter
+git pull origin master
+sudo systemctl restart liquidity-hunter
+```
+
+Проверка: `sudo systemctl status liquidity-hunter`

@@ -1,0 +1,16 @@
+[Unit]
+Description=Liquidity Hunter v1 — Telegram бот сигналов
+After=network.target
+
+[Service]
+Type=simple
+User=pulse
+WorkingDirectory=/home/pulse/liquidity_hunter
+ExecStart=/home/pulse/liquidity_hunter/venv/bin/python main.py
+Restart=always
+RestartSec=10
+Environment=PATH=/home/pulse/liquidity_hunter/venv/bin
+EnvironmentFile=/home/pulse/liquidity_hunter/.env
+
+[Install]
+WantedBy=multi-user.target
