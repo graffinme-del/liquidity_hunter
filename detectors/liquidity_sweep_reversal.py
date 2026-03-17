@@ -14,6 +14,30 @@ from structure import (
 )
 
 
+def _check_1h_structure(candles_1h: list[dict], direction: str, price: float) -> bool:
+    """1h: LONG — есть поддержка (цена у swing/EMA), SHORT — сопротивление."""
+    if len(candles_1h) < 20:
+        return True
+    ema_1h = ema20(candles_1h)
+    last_1h = candles_1h[-1]
+    close_1h = float(last_1h.get("close", 0) or 0)
+    low_1h = float(last_1h.get("low", 0) or 0)
+    high_1h = float(last_1h.get("high", 0) or 0)
+    rng_1h = high_1h - low_1h
+    if rng_1h <= 0:
+        return True
+    close_pos_1h = (close_1h - low_1h) / rng_1h
+    if direction == "LONG":
+        # Поддержка: 1h close не в самом низу (хотя бы 30% от лоу) или выше EMA
+        if ema_1h and price >= ema_1h * 0.995:
+            return True
+        return close_pos_1h >= 0.3
+    else:  # SHORT
+        if ema_1h and price <= ema_1h * 1.005:
+            return True
+        return close_pos_1h <= 0.7
+
+
 def _to_float(x, default: float = 0.0) -> float:
     try:
         return float(x)
@@ -62,8 +86,15 @@ def detect(
     atr_val = (close * (atr_15m or 0) / 100) if atr_15m else (rng * 1.5)
     ema_val = ema20(candles_15m)
 
+    # Позиция закрытия в теле: LONG — close в верхних 50%, SHORT — в нижних 50%
+    close_position = (close - low) / rng if rng > 0 else 0.5
+
     # SHORT sweep
     if high > prev_high and close < prev_high and wick_up >= body * config.SWEEP_MIN_WICK_TO_BODY:
+        if close_position > (1 - config.SWEEP_CLOSE_POSITION_MIN):
+            return None  # для SHORT нужен close в нижней части
+        if config.SWEEP_1H_STRUCTURE and not _check_1h_structure(candles_1h, "SHORT", close):
+            return None
         entry = close
         sweep_high = high * 1.002
         stop = structural_sl_short(candles_15m, high, ema_val, entry)
@@ -103,6 +134,10 @@ def detect(
 
     # LONG sweep
     if low < prev_low and close > prev_low and wick_down >= body * config.SWEEP_MIN_WICK_TO_BODY:
+        if close_position < config.SWEEP_CLOSE_POSITION_MIN:
+            return None  # для LONG нужен close в верхней части диапазона
+        if config.SWEEP_1H_STRUCTURE and not _check_1h_structure(candles_1h, "LONG", close):
+            return None
         entry = close
         sweep_low = low * 0.998
         stop = structural_sl_long(candles_15m, low, ema_val, entry)

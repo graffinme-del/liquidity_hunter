@@ -44,6 +44,35 @@ def _is_trading_hours() -> bool:
     return config.TRADING_START_HOUR <= hour < config.TRADING_END_HOUR
 
 
+def _seconds_until_candle_close(tf: str) -> int:
+    """Секунд до закрытия текущей свечи (Binance UTC)."""
+    utc = datetime.now(timezone.utc)
+    minute = utc.minute
+    second = utc.second
+    if tf == "1h":
+        sec_left = (60 - minute) * 60 - second
+    else:  # 15m
+        next_boundary = ((minute // 15) + 1) * 15
+        if next_boundary >= 60:
+            next_boundary = 60
+        curr_frac = minute + second / 60.0
+        sec_left = (next_boundary - curr_frac) * 60
+    return max(0, int(sec_left))
+
+
+def _tick_interval() -> float:
+    """Интервал тика: чаще перед закрытием свечи — меньше задержка."""
+    tf = config.SIGNAL_TIMEFRAME
+    sec_to_close = _seconds_until_candle_close(tf)
+    if tf == "1h":
+        near_window = 300  # последние 5 минут
+    else:
+        near_window = 120  # последние 2 минуты
+    if sec_to_close <= near_window:
+        return config.TICK_INTERVAL_NEAR_CLOSE_SEC
+    return config.TICK_INTERVAL_SEC
+
+
 async def run_tick(
     client: BinanceClient,
     last_sent: dict[str, float],
@@ -58,28 +87,35 @@ async def run_tick(
     candidates: list[dict] = []
     now = time.time()
 
+    # Sweep: только закрытые свечи; cont/exp: всегда 15m
+    tf = config.SIGNAL_TIMEFRAME
     for symbol in symbols:
         try:
             candles_15m = await client.get_klines(symbol, "15m", 100)
+            candles_tf = await client.get_klines(symbol, tf, 100) if tf != "15m" else candles_15m
             candles_1h = await client.get_klines(symbol, "1h", 50)
-            if len(candles_15m) < config.SWEEP_MIN_CANDLES or len(candles_1h) < 20:
+            if len(candles_tf) < config.SWEEP_MIN_CANDLES or len(candles_1h) < 20:
                 continue
 
             atr_pct_1h = atr_pct(candles_1h, 14)
             if atr_pct_1h is not None and atr_pct_1h < config.ATR_MIN_PCT_1H:
                 continue
 
-            last_candle = candles_15m[-1]
-            price = float(last_candle.get("close", 0) or 0)
+            # Только закрытые свечи — исключаем формирующуюся
+            closed_tf = candles_tf[:-1] if len(candles_tf) > 1 else candles_tf
+            if not closed_tf:
+                continue
+            last_closed = closed_tf[-1]
+            price = float(last_closed.get("close", 0) or 0)
             if price < config.MIN_PRICE:
                 continue
 
-            vol_last = float(last_candle.get("volume", 0) or 0)
-            vol_avg = sum(float(c.get("volume", 0) or 0) for c in candles_15m[-21:-1]) / 20 if len(candles_15m) >= 21 else vol_last
+            vol_last = float(last_closed.get("volume", 0) or 0)
+            vol_avg = sum(float(c.get("volume", 0) or 0) for c in closed_tf[-21:-1]) / 20 if len(closed_tf) >= 21 else vol_last
             if vol_avg > 0 and vol_last < vol_avg * config.VOLUME_LAST_MIN_RATIO:
                 continue
 
-            oi_hist = await client.get_open_interest_hist(symbol, "15m", 3)
+            oi_hist = await client.get_open_interest_hist(symbol, tf, 3)
             oi_ctx = None
             if len(oi_hist) >= 2:
                 oi_now = oi_hist[-1].get("open_interest", 0)
@@ -87,7 +123,7 @@ async def run_tick(
                 if oi_prev and oi_prev > 0:
                     oi_ctx = {"oi_change_pct": (oi_now - oi_prev) / oi_prev * 100}
 
-            cand = liquidity_sweep_reversal.detect(symbol, candles_15m, candles_1h, atr_pct_1h)
+            cand = liquidity_sweep_reversal.detect(symbol, closed_tf, candles_1h, atr_pct_1h)
             if cand:
                 candidates.append(cand)
             cand = liquidity_sweep_continuation.detect(symbol, candles_15m, candles_1h, atr_pct_1h)
@@ -143,7 +179,8 @@ async def run_scanner():
             except Exception as e:
                 print(f"[SCANNER] Ошибка тика: {e}")
 
-            await asyncio.sleep(config.TICK_INTERVAL_SEC)
+            interval = _tick_interval()
+            await asyncio.sleep(interval)
 
 
 if __name__ == "__main__":
