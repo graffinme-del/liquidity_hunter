@@ -75,3 +75,15 @@ sudo systemctl restart liquidity-hunter
 ```
 
 Проверка: `sudo systemctl status liquidity-hunter`
+
+## 6. Статистика и отчёты
+
+- **Сигналы** логируются в `storage/signals.jsonl`
+- **Ежедневный отчёт** в 21:00 Москва — автоматически (встроен в бота)
+- Отчёт: TP/SL/NO_OUTCOME, winrate, по стратегиям
+
+Ручной резолв (если нужно):
+```bash
+cd ~/liquidity_hunter && source venv/bin/activate
+python outcome_resolver.py --window-hours 48
+```

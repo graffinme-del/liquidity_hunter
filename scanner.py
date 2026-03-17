@@ -14,6 +14,7 @@ from data.binance_client import BinanceClient
 from detectors import liquidity_sweep_reversal, liquidity_sweep_continuation, volatility_expansion
 from notifier import format_signal
 from structure import atr_pct
+from storage.signal_log import log_signal
 
 
 async def send_telegram(text: str) -> bool:
@@ -128,6 +129,10 @@ async def run_scanner():
                     text = format_signal(winner)
                     print(f"\n[СИГНАЛ]\n{text}\n")
                     await send_telegram(text)
+                    try:
+                        log_signal(winner)
+                    except Exception as e:
+                        print(f"[SCANNER] Ошибка логирования: {e}")
                     now = time.time()
                     last_sent[_dedup_key(winner)] = now
                     # Очистка старых записей
