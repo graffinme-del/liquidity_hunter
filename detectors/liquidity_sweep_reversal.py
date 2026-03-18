@@ -117,6 +117,8 @@ def detect(
             score += 10
 
         rr = (entry - (tp_zone[0] + tp_zone[1]) / 2) / risk if risk > 0 else 0
+        if rr < config.SWEEP_RR_MIN:
+            return None
 
         return {
             "strategy": "liquidity_sweep_reversal",
@@ -159,6 +161,8 @@ def detect(
             score += 10
 
         rr = ((tp_zone[0] + tp_zone[1]) / 2 - entry) / risk if risk > 0 else 0
+        if rr < config.SWEEP_RR_MIN:
+            return None
 
         return {
             "strategy": "liquidity_sweep_reversal",
