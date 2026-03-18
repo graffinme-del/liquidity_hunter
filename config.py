@@ -1,10 +1,10 @@
 # Liquidity Hunter v1 — конфигурация
 
 # Волатильность (ОБЯЗАТЕЛЬНЫЙ фильтр)
-ATR_MIN_PCT_1H = 0.4  # ниже — не торгуем (0.25% = плоский рынок, денег нет)
+ATR_MIN_PCT_1H = 0.3  # ниже — не торгуем (ослаблено с 0.4 для большего потока)
 MIN_PRICE = 0.01  # не торгуем пары с ценой ниже (микрокапы)
 ATR_PUMP_BONUS_PCT = 0.5  # выше — бонус к score (pump mode)
-VOLUME_LAST_MIN_RATIO = 1.0  # объём последней свечи ≥ avg × это (обязательный фильтр)
+VOLUME_LAST_MIN_RATIO = 0.8  # объём последней свечи ≥ avg × это (ослаблено с 1.0)
 
 # Таймфрейм для sweep: "15m" (меньше шума) или "1h" (чище структура, меньше сигналов)
 SIGNAL_TIMEFRAME = "15m"
@@ -13,9 +13,9 @@ UNIVERSE_TOP_N = 50  # топ по объёму 24h
 # liquidity_sweep_reversal
 SWEEP_LOOKBACK = 18
 SWEEP_MIN_WICK_TO_BODY = 1.0
-SWEEP_RR_MIN = 1.2  # ниже — не даём сигнал (слишком мало потенциала)
+SWEEP_RR_MIN = 1.0  # ниже — не даём сигнал (ослаблено с 1.2)
 SWEEP_CLOSE_POSITION_MIN = 0.5  # close в верхних 50% (LONG) или нижних 50% (SHORT) диапазона
-SWEEP_1H_STRUCTURE = True  # 1h: LONG — поддержка, SHORT — сопротивление
+SWEEP_1H_STRUCTURE = False  # 1h фильтр выключен — больше сигналов
 SWEEP_MIN_CANDLES = 25
 SWEEP_RR_TARGET = 1.8
 SWEEP_BASE_SCORE = 70
