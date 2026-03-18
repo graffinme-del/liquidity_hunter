@@ -123,7 +123,7 @@ async def run_tick(
                 if oi_prev and oi_prev > 0:
                     oi_ctx = {"oi_change_pct": (oi_now - oi_prev) / oi_prev * 100}
 
-            cand = liquidity_sweep_reversal.detect(symbol, closed_tf, candles_1h, atr_pct_1h)
+            cand = liquidity_sweep_reversal.detect(symbol, closed_tf, candles_1h, atr_pct_1h, oi_ctx)
             if cand:
                 candidates.append(cand)
             cand = liquidity_sweep_continuation.detect(symbol, candles_15m, candles_1h, atr_pct_1h)

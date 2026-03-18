@@ -10,12 +10,14 @@ VOLUME_LAST_MIN_RATIO = 0.8  # объём последней свечи ≥ avg 
 SIGNAL_TIMEFRAME = "15m"
 UNIVERSE_TOP_N = 50  # топ по объёму 24h
 
-# liquidity_sweep_reversal
+# liquidity_sweep_reversal — охота на ликвидность, не флет
 SWEEP_LOOKBACK = 18
 SWEEP_MIN_WICK_TO_BODY = 1.0
-SWEEP_RR_MIN = 1.0  # ниже — не даём сигнал (ослаблено с 1.2)
-SWEEP_CLOSE_POSITION_MIN = 0.5  # close в верхних 50% (LONG) или нижних 50% (SHORT) диапазона
-SWEEP_1H_STRUCTURE = False  # 1h фильтр выключен — больше сигналов
+SWEEP_RR_MIN = 1.0
+SWEEP_CLOSE_POSITION_MIN = 0.5
+SWEEP_1H_STRUCTURE = False
+SWEEP_OI_MIN_CHANGE_PCT = 1.0  # OI должен двигаться — иначе нет ликвидаций для охоты
+SWEEP_ATR_MIN_1H = 0.5  # sweep только при реальном движении (не флет)
 SWEEP_MIN_CANDLES = 25
 SWEEP_RR_TARGET = 1.8
 SWEEP_BASE_SCORE = 70

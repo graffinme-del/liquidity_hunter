@@ -50,15 +50,25 @@ def detect(
     candles_15m: list[dict],
     candles_1h: list[dict],
     atr_pct_1h: Optional[float],
+    oi_ctx: Optional[dict] = None,
 ) -> Optional[dict]:
     """
     Возвращает кандидат или None.
-    Кандидат: strategy, direction, trigger_price, entry, stop, tp_zone, reason_ru, score, rr
+    Охота на ликвидность — только когда есть OI и волатильность.
     """
     if len(candles_15m) < config.SWEEP_MIN_CANDLES:
         return None
 
     if atr_pct_1h is not None and atr_pct_1h < config.ATR_MIN_PCT_1H:
+        return None
+
+    # Sweep требует волатильности — не флет
+    if atr_pct_1h is not None and atr_pct_1h < config.SWEEP_ATR_MIN_1H:
+        return None
+
+    # OI должен двигаться — иначе нет ликвидаций для охоты
+    oi_change = (oi_ctx or {}).get("oi_change_pct")
+    if oi_change is None or abs(oi_change) < config.SWEEP_OI_MIN_CHANGE_PCT:
         return None
 
     last = candles_15m[-1]
