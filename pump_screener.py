@@ -72,14 +72,14 @@ async def run_screener(send_tg: bool = False) -> list[dict]:
         chat_id = os.getenv("TELEGRAM_CHAT_ID")
         if token and chat_id:
             mn, mx = config.PUMP_EMA_DETACH_PCT_MIN, config.PUMP_EMA_DETACH_PCT_MAX
-            lines = [f"Пампы ({mn:.0f}-{mx:.0f}% выше EMA20 1h):"]
-            for p in pumped[:15]:  # топ 15
+            lines = [f"<b>Пампы ({mn:.0f}-{mx:.0f}% выше EMA20 1h)</b>"]
+            for p in pumped[:15]:
                 lines.append(f"  {p['symbol']}: +{p['detach_pct']}% от EMA")
             text = "\n".join(lines)
             url = f"https://api.telegram.org/bot{token}/sendMessage"
             try:
                 async with aiohttp.ClientSession() as session:
-                    async with session.post(url, json={"chat_id": chat_id, "text": text}) as r:
+                    async with session.post(url, json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"}) as r:
                         pass
             except Exception as e:
                 print(f"[PUMP] TG: {e}")
