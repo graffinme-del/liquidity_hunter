@@ -99,8 +99,9 @@ def detect(
     # Позиция закрытия в теле: LONG — close в верхних 50%, SHORT — в нижних 50%
     close_position = (close - low) / rng if rng > 0 else 0.5
 
-    # SHORT sweep
-    if high > prev_high and close < prev_high and wick_up >= body * config.SWEEP_MIN_WICK_TO_BODY:
+    # SHORT sweep — длинная верхняя тень
+    wick_up_pct = wick_up / rng if rng > 0 else 0
+    if high > prev_high and close < prev_high and wick_up >= body * config.SWEEP_MIN_WICK_TO_BODY and wick_up_pct >= config.SWEEP_MIN_WICK_PCT_OF_RANGE:
         if close_position > (1 - config.SWEEP_CLOSE_POSITION_MIN):
             return None  # для SHORT нужен close в нижней части
         if config.SWEEP_1H_STRUCTURE and not _check_1h_structure(candles_1h, "SHORT", close):
@@ -144,8 +145,9 @@ def detect(
             "atr_pct_1h": atr_pct_1h,
         }
 
-    # LONG sweep
-    if low < prev_low and close > prev_low and wick_down >= body * config.SWEEP_MIN_WICK_TO_BODY:
+    # LONG sweep — длинная нижняя тень, не мелочевка
+    wick_down_pct = wick_down / rng if rng > 0 else 0
+    if low < prev_low and close > prev_low and wick_down >= body * config.SWEEP_MIN_WICK_TO_BODY and wick_down_pct >= config.SWEEP_MIN_WICK_PCT_OF_RANGE:
         if close_position < config.SWEEP_CLOSE_POSITION_MIN:
             return None  # для LONG нужен close в верхней части диапазона
         if config.SWEEP_1H_STRUCTURE and not _check_1h_structure(candles_1h, "LONG", close):

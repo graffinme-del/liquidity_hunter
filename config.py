@@ -12,12 +12,13 @@ UNIVERSE_TOP_N = 50  # топ по объёму 24h
 
 # liquidity_sweep_reversal — охота на ликвидность, не флет
 SWEEP_LOOKBACK = 18
-SWEEP_MIN_WICK_TO_BODY = 1.0
+SWEEP_MIN_WICK_TO_BODY = 2.0  # тень минимум 2× тела — не мелочь
+SWEEP_MIN_WICK_PCT_OF_RANGE = 0.4  # тень ≥ 40% диапазона свечи — длинная
 SWEEP_RR_MIN = 1.0
 SWEEP_CLOSE_POSITION_MIN = 0.5
 SWEEP_1H_STRUCTURE = False
-SWEEP_OI_MIN_CHANGE_PCT = 1.0  # OI должен двигаться — иначе нет ликвидаций для охоты
-SWEEP_ATR_MIN_1H = 0.5  # sweep только при реальном движении (не флет)
+SWEEP_OI_MIN_CHANGE_PCT = 0.5  # OI двигается (ослаблено с 1% — редко за 15m)
+SWEEP_ATR_MIN_1H = 0.35  # sweep при движении (чуть выше глобального 0.3)
 SWEEP_MIN_CANDLES = 25
 SWEEP_RR_TARGET = 1.8
 SWEEP_BASE_SCORE = 70
