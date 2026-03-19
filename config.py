@@ -44,6 +44,11 @@ EXP_OI_MIN_ACCUM_PCT = 3.0
 EXP_RR_MIN = 2.0
 EXP_BASE_SCORE = 75
 
+# Taker long/short — перекос = подготовка к охоте
+TAKER_RATIO_LONG_TRAP = 2.0   # ratio > 2 → много лонгов → бонус к SHORT
+TAKER_RATIO_SHORT_TRAP = 0.5  # ratio < 0.5 → много шортов → бонус к LONG
+TAKER_TRAP_BONUS = 20
+
 # Дедупликация
 DEDUP_MINUTES = 60
 

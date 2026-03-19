@@ -37,6 +37,20 @@ def _dedup_key(signal: dict) -> tuple:
     return (signal.get("symbol", ""), signal.get("direction", ""))
 
 
+def _apply_taker_bonus(cand: dict, taker_ratio: Optional[float]) -> None:
+    """Перекос лонгов/шортов — бонус к score (подготовка к охоте)."""
+    if taker_ratio is None:
+        return
+    direction = cand.get("direction", "")
+    score = cand.get("score", 0)
+    if direction == "LONG" and taker_ratio < config.TAKER_RATIO_SHORT_TRAP:
+        cand["score"] = score + config.TAKER_TRAP_BONUS
+        cand["taker_trap"] = True
+    elif direction == "SHORT" and taker_ratio > config.TAKER_RATIO_LONG_TRAP:
+        cand["score"] = score + config.TAKER_TRAP_BONUS
+        cand["taker_trap"] = True
+
+
 def _is_trading_hours() -> bool:
     # Europe/Moscow = UTC+3 (без DST с 2011)
     moscow = timezone(timedelta(hours=3))
@@ -123,14 +137,24 @@ async def run_tick(
                 if oi_prev and oi_prev > 0:
                     oi_ctx = {"oi_change_pct": (oi_now - oi_prev) / oi_prev * 100}
 
+            taker = await client.get_taker_long_short(symbol, "15m", 2)
+            taker_ratio = None
+            if taker and taker[-1].get("sell_vol", 0) > 0:
+                buy_v = taker[-1].get("buy_vol", 0) or 0
+                sell_v = taker[-1].get("sell_vol", 0) or 1
+                taker_ratio = buy_v / sell_v
+
             cand = liquidity_sweep_reversal.detect(symbol, closed_tf, candles_1h, atr_pct_1h, oi_ctx)
             if cand:
+                _apply_taker_bonus(cand, taker_ratio)
                 candidates.append(cand)
             cand = liquidity_sweep_continuation.detect(symbol, candles_15m, candles_1h, atr_pct_1h)
             if cand:
+                _apply_taker_bonus(cand, taker_ratio)
                 candidates.append(cand)
             cand = volatility_expansion.detect(symbol, candles_15m, candles_1h, atr_pct_1h, oi_ctx)
             if cand:
+                _apply_taker_bonus(cand, taker_ratio)
                 candidates.append(cand)
 
         except Exception as e:
