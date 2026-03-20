@@ -66,9 +66,12 @@ def detect(
     if atr_pct_1h is not None and atr_pct_1h < config.SWEEP_ATR_MIN_1H:
         return None
 
-    # OI должен двигаться — иначе нет ликвидаций для охоты
+    # OI: при SWEEP_OI_REQUIRED без данных — стоп; иначе без OI пропускаем, с OI — проверяем порог
     oi_change = (oi_ctx or {}).get("oi_change_pct")
-    if oi_change is None or abs(oi_change) < config.SWEEP_OI_MIN_CHANGE_PCT:
+    if oi_change is None:
+        if config.SWEEP_OI_REQUIRED:
+            return None
+    elif abs(oi_change) < config.SWEEP_OI_MIN_CHANGE_PCT:
         return None
 
     last = candles_15m[-1]
