@@ -49,6 +49,56 @@ class BinanceClient:
         self._symbols_cached_at = now
         return self._symbols_cache[:limit]
 
+    async def get_symbols_for_movement_scan(
+        self,
+        min_quote_volume_24h: float,
+        max_symbols: int,
+        sort_by: str = "abs_change_24h",
+    ) -> list[str]:
+        """
+        Список USDT perpetual для сканера движения — не «топ по объёму».
+        sort_by: abs_change_24h — сначала кто уже шевелится за сутки;
+                 low_volume — мелкий объём 24h (мелкие пары вперёд).
+        """
+        try:
+            async with self._session.get(f"{self._base}/fapi/v1/ticker/24hr", timeout=30) as r:
+                r.raise_for_status()
+                data = await r.json()
+        except Exception:
+            return []
+
+        if not isinstance(data, list):
+            return []
+
+        rows: list[tuple[str, float, float]] = []
+        for row in data:
+            if not isinstance(row, dict):
+                continue
+            sym = str(row.get("symbol", ""))
+            if not sym.endswith("USDT"):
+                continue
+            try:
+                qv = float(row.get("quoteVolume", 0.0))
+                pcp = float(row.get("priceChangePercent", 0.0))
+            except (TypeError, ValueError):
+                continue
+            if qv < min_quote_volume_24h:
+                continue
+            rows.append((sym, qv, abs(pcp)))
+
+        if not rows:
+            return []
+
+        if sort_by == "low_volume":
+            rows.sort(key=lambda x: x[1])
+        else:
+            rows.sort(key=lambda x: x[2], reverse=True)
+
+        out = [s for s, _, _ in rows]
+        if max_symbols > 0:
+            out = out[:max_symbols]
+        return out
+
     async def get_klines(self, symbol: str, interval: str, limit: int = 100) -> list[dict]:
         params = {"symbol": symbol, "interval": interval, "limit": limit}
         try:

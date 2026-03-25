@@ -53,9 +53,10 @@ TAKER_TRAP_BONUS = 20
 # Дедупликация
 DEDUP_MINUTES = 60
 
-# Сканер
-TICK_INTERVAL_SEC = 60  # интервал тика
-TICK_INTERVAL_NEAR_CLOSE_SEC = 15  # ближе к закрытию свечи — чаще (для быстрой реакции)
+# Сканер (на слабом VPS частые тики + 50 пар = лаги SSH; поднимай паузы)
+TICK_INTERVAL_SEC = 90  # было 60 — меньше нагрузка на сервер
+TICK_INTERVAL_NEAR_CLOSE_SEC = 45  # было 15 — не долбить API каждые 15 с
+SCAN_SYMBOL_PAUSE_SEC = 0.12  # пауза между парами, разгрузка CPU/сети
 
 # Часы работы (Москва, UTC+3)
 TRADING_START_HOUR = 9   # с 9:00
@@ -65,3 +66,15 @@ TRADING_END_HOUR = 21    # до 21:00
 PUMP_EMA_DETACH_PCT_MIN = 20.0   # минимум % выше EMA20 1h
 PUMP_EMA_DETACH_PCT_MAX = 35.0   # максимум (сильнее = уже параболика)
 PUMP_CHECK_INTERVAL_MIN = 60     # проверка раз в час
+
+# Сканер резкого движения (не топ по объёму — см. VOL_SCAN_SYMBOL_SORT)
+VOL_SCAN_ENABLED = True
+VOL_SCAN_INTERVAL_MIN = 30       # как часто крутить сканер
+VOL_SCAN_MAX_SYMBOLS = 120       # 0 = без лимита (тяжело для VPS)
+VOL_SCAN_MIN_QUOTE_VOL_24H = 50_000.0  # отсечь совсем мёртвые пары (USDT за 24h)
+VOL_SCAN_SYMBOL_SORT = "abs_change_24h"  # abs_change_24h | low_volume
+VOL_SCAN_SHUFFLE = False           # True — перемешать список (другие монеты за проход)
+VOL_SCAN_ATR_PCT_MIN = 1.2       # ATR% 15m — выше = резче рынок
+VOL_SCAN_ROC_1H_MIN = 2.0        # |изменение цены| за ~1h на 15m свечах, %
+VOL_SCAN_RANGE_SPIKE_MULT = 2.0  # диапазон последней свечи vs медиана диапазона
+VOL_SCAN_DEDUP_MIN = 45          # не дублировать алерт по той же монете, мин
