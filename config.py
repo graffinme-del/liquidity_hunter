@@ -78,3 +78,10 @@ VOL_SCAN_ATR_PCT_MIN = 1.2       # ATR% 15m — выше = резче рынок
 VOL_SCAN_ROC_1H_MIN = 2.0        # |изменение цены| за ~1h на 15m свечах, %
 VOL_SCAN_RANGE_SPIKE_MULT = 2.0  # диапазон последней свечи vs медиана диапазона
 VOL_SCAN_DEDUP_MIN = 45          # не дублировать алерт по той же монете, мин
+# «Здесь и сейчас» — не хвост после пампа (ATR уже падает на графике)
+VOL_SCAN_REQUIRE_ATR_EXPANDING = True   # ATR% сейчас выше, чем ~1ч назад
+VOL_SCAN_ATR_EXPANSION_MIN_RATIO = 1.02 # минимум: ATR_now / ATR_1h_ago (1.02 = +2%)
+VOL_SCAN_REJECT_ATR_COOLING = True      # отсекать, если ATR_now < ATR_1h_ago (остывание)
+VOL_SCAN_REJECT_STALE_HIGH_ATR = True # высокий ATR, но цена почти не двигается (застой)
+VOL_SCAN_STALE_ATR_PCT = 1.5          # выше этого ATR%
+VOL_SCAN_STALE_ROC_MAX = 0.4          # и ROC1h ниже — в список не попадаем

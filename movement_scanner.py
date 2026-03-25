@@ -26,6 +26,31 @@ def _to_float(x: Any, default: float = 0.0) -> float:
         return default
 
 
+def _format_vol_tg_line(h: dict) -> str:
+    """Одна строка: тикер жирный+курсив, смысл без дублирования цифр."""
+    sym = h.get("symbol", "?")
+    head = f"<b><i>{sym}</i></b>"
+    atr = h.get("atr_pct")
+    atr_was = h.get("atr_1h_ago")
+    roc = h.get("roc_1h")
+    rmult = h.get("range_mult")
+
+    parts: list[str] = []
+    if atr_was is not None and atr_was > 1e-9 and atr is not None:
+        x = atr / atr_was
+        parts.append(f"волатильность растёт (сейчас в {x:.2f}× от уровня ~1 ч назад)")
+    elif atr is not None:
+        parts.append(f"ATR к цене ~{atr:.1f}%")
+    if roc is not None:
+        parts.append(f"за ~1 ч цена сдвинулась на ~{roc:.1f}%")
+    if rmult is not None and rmult >= getattr(config, "VOL_SCAN_RANGE_SPIKE_MULT", 2) - 0.01:
+        parts.append(f"последняя свеча шире обычного (~{rmult:.1f}× к медиане)")
+
+    if not parts:
+        parts.append("резкий участок")
+    return f"{head} — {'; '.join(parts)}"
+
+
 def _median(xs: list[float]) -> float:
     if not xs:
         return 0.0
@@ -69,6 +94,11 @@ def _analyze_closed_15m(candles: list[dict]) -> Optional[dict]:
 
     range_mult = (last_range_pct / med_range) if med_range > 1e-9 else 0.0
 
+    # ATR% «как было ~1ч назад» (4 закрытые свечи 15m)
+    atr_1h_ago: Optional[float] = None
+    if len(closed) >= 22:
+        atr_1h_ago = atr_pct(closed[:-4], 14)
+
     hit = False
     reasons: list[str] = []
     if atr_pct_val is not None and atr_pct_val >= config.VOL_SCAN_ATR_PCT_MIN:
@@ -84,8 +114,32 @@ def _analyze_closed_15m(candles: list[dict]) -> Optional[dict]:
     if not hit:
         return None
 
+    # --- Фильтры «не остывший хвост» ---
+    if getattr(config, "VOL_SCAN_REQUIRE_ATR_EXPANDING", False) and atr_1h_ago is None:
+        return None
+
+    if atr_1h_ago is not None and atr_1h_ago > 1e-9:
+        ratio = (atr_pct_val or 0) / atr_1h_ago
+        if getattr(config, "VOL_SCAN_REJECT_ATR_COOLING", True):
+            if atr_pct_val is not None and atr_pct_val < atr_1h_ago:
+                return None
+        if getattr(config, "VOL_SCAN_REQUIRE_ATR_EXPANDING", False):
+            min_r = getattr(config, "VOL_SCAN_ATR_EXPANSION_MIN_RATIO", 1.02)
+            if atr_pct_val is None or atr_pct_val < atr_1h_ago * min_r:
+                return None
+        reasons.append(f"ATR/ATR_1h={ratio:.2f}")
+
+    if getattr(config, "VOL_SCAN_REJECT_STALE_HIGH_ATR", True):
+        if (
+            atr_pct_val is not None
+            and atr_pct_val >= getattr(config, "VOL_SCAN_STALE_ATR_PCT", 1.5)
+            and roc_1h < getattr(config, "VOL_SCAN_STALE_ROC_MAX", 0.4)
+        ):
+            return None
+
     return {
         "atr_pct": round(atr_pct_val or 0, 3),
+        "atr_1h_ago": round(atr_1h_ago, 3) if atr_1h_ago is not None else None,
         "roc_1h": round(roc_1h, 3),
         "range_mult": round(range_mult, 2),
         "last_range_pct": round(last_range_pct, 3),
@@ -150,10 +204,7 @@ async def run_movement_scan(send_tg: bool = True) -> list[dict]:
         if token and chat_id:
             lines = ["<b>Резкое движение (15m)</b>", "Направление не указано — только волатильность.", ""]
             for h in hits[:40]:
-                r = ", ".join(h.get("reasons") or [])
-                lines.append(
-                    f"{h['symbol']}: {r} | ATR% {h['atr_pct']} | ROC1h {h['roc_1h']}%"
-                )
+                lines.append(_format_vol_tg_line(h))
             if len(hits) > 40:
                 lines.append(f"... и ещё {len(hits) - 40}")
             text = "\n".join(lines)

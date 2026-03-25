@@ -63,6 +63,10 @@ async def run_screener(send_tg: bool = False) -> list[dict]:
             except Exception as e:
                 print(f"[PUMP] {symbol}: {e}")
                 continue
+            finally:
+                pause = getattr(config, "SCAN_SYMBOL_PAUSE_SEC", 0) or 0
+                if pause > 0:
+                    await asyncio.sleep(pause)
 
     # Сортируем по отрыву (сильнее = выше)
     pumped.sort(key=lambda x: x["detach_pct"], reverse=True)

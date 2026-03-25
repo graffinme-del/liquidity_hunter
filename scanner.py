@@ -160,6 +160,9 @@ async def run_tick(
         except Exception as e:
             print(f"[SCANNER] Ошибка {symbol}: {e}")
             continue
+        finally:
+            if getattr(config, "SCAN_SYMBOL_PAUSE_SEC", 0) > 0:
+                await asyncio.sleep(config.SCAN_SYMBOL_PAUSE_SEC)
 
     if not candidates:
         return None, 0.0

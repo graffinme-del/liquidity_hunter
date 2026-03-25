@@ -40,6 +40,9 @@ def format_signal(signal: dict) -> str:
         "",
         f"RR: {rr:.1f} | ATR%: {atr_pct:.2f}%" if atr_pct else f"RR: {rr:.1f}",
     ]
+    if signal.get("taker_trap"):
+        lines.append("")
+        lines.append("Подготовка к охоте за стопами.")
     return "\n".join(lines)
 
 
