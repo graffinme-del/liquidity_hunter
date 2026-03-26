@@ -1,13 +1,13 @@
 # Liquidity Hunter v1 — конфигурация
 # Профиль: скальп / импульсы — крутить волатильность в блоке ниже; остальное смягчено в orientation/ и .env.
 
-# Волатильность — жёсткий фильтр (скальп / импульсы, без мёртвых монет)
-ATR_MIN_PCT_1H = 0.5  # ATR% по 1h — ниже не рассматриваем
-ATR_MIN_PCT_15M = 0.45  # ATR% по 15m — импульс «здесь и сейчас»
+# Волатильность — баланс: не мёртвые пары, но и не «ноль сигналов в час»
+ATR_MIN_PCT_1H = 0.35  # ATR% по 1h — ниже не рассматриваем
+ATR_MIN_PCT_15M = 0.28  # ATR% по 15m — импульс «здесь и сейчас»
 MIN_PRICE = 0.01  # не торгуем пары с ценой ниже (микрокапы)
 ATR_PUMP_BONUS_PCT = 0.5  # выше — бонус к score (pump mode)
-# Объём последней свечи vs средний — не дублирует ATR; чуть мягче, чтобы не резать всплески
-VOLUME_LAST_MIN_RATIO = 0.65
+# Объём последней свечи vs средний — не дублирует ATR
+VOLUME_LAST_MIN_RATIO = 0.55
 
 # Таймфрейм для sweep: "15m" (меньше шума) или "1h" (чище структура, меньше сигналов)
 SIGNAL_TIMEFRAME = "15m"
@@ -20,9 +20,9 @@ SWEEP_MIN_WICK_PCT_OF_RANGE = 0.32  # было 0.4 — длинная тень, 
 SWEEP_RR_MIN = 1.0
 SWEEP_CLOSE_POSITION_MIN = 0.5
 SWEEP_1H_STRUCTURE = False
-SWEEP_OI_MIN_CHANGE_PCT = 0.15  # если OI есть — минимум движения
+SWEEP_OI_MIN_CHANGE_PCT = 0.10  # если OI есть — минимум движения
 SWEEP_OI_REQUIRED = False  # импульс может быть без стабильного OI — глобальный ATR режет флет
-SWEEP_ATR_MIN_1H = 0.5  # согласовано с ATR_MIN_PCT_1H
+SWEEP_ATR_MIN_1H = 0.35  # согласовано с ATR_MIN_PCT_1H
 SWEEP_MIN_CANDLES = 25
 SWEEP_RR_TARGET = 1.8
 SWEEP_BASE_SCORE = 70

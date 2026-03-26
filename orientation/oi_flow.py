@@ -100,7 +100,7 @@ def apply_oi_orientation(candidate: dict, oi_ctx: dict | None) -> bool:
     hints.append(_hint_ru(flow) + f" (Δцена {pr:+.2f}%  ΔOI {oi:+.2f}%)")
 
     direction = str(candidate.get("direction", "")).upper()
-    adjust = _truthy("OI_ORIENT_SCORE_ADJUST", "1")
+    adjust = _truthy("OI_ORIENT_SCORE_ADJUST", "0")
     bonus = _env_float("OI_ORIENT_BONUS_SCORE", 2.0)
     penalty = _env_float("OI_ORIENT_PENALTY_SCORE", 0.5)
 

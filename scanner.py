@@ -127,7 +127,7 @@ async def run_tick(
             if atr_pct_1h is not None and atr_pct_1h < config.ATR_MIN_PCT_1H:
                 continue
 
-            atr_min_15m = float(getattr(config, "ATR_MIN_PCT_15M", 0.45))
+            atr_min_15m = float(getattr(config, "ATR_MIN_PCT_15M", 0.28))
             atr_pct_15m = atr_pct(candles_15m, 14)
             if atr_pct_15m is not None and atr_pct_15m < atr_min_15m:
                 continue

@@ -106,7 +106,7 @@ def apply_h1_orientation(candidate: dict, candles_1h: list[dict] | None) -> bool
     hints.append(base)
 
     direction = str(candidate.get("direction", "")).upper()
-    adjust = _truthy("H1_ORIENT_SCORE_ADJUST", "1")
+    adjust = _truthy("H1_ORIENT_SCORE_ADJUST", "0")
     bonus = _env_float("H1_ORIENT_BONUS_SCORE", 2.0)
     penalty = _env_float("H1_ORIENT_PENALTY_SCORE", 0.25)
     rev_bonus = _env_float("H1_REVERSAL_BONUS_SCORE", 1.5)
