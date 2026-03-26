@@ -15,22 +15,7 @@ from detectors import liquidity_sweep_reversal, liquidity_sweep_continuation, vo
 from notifier import format_signal
 from structure import atr_pct
 from storage.signal_log import log_signal
-
-
-async def send_telegram(text: str) -> bool:
-    token = os.getenv("TELEGRAM_BOT_TOKEN")
-    chat_id = os.getenv("TELEGRAM_CHAT_ID")
-    if not token or not chat_id:
-        print("[SCANNER] TELEGRAM_BOT_TOKEN или TELEGRAM_CHAT_ID не заданы, пропуск отправки")
-        return False
-    url = f"https://api.telegram.org/bot{token}/sendMessage"
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(url, json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"}) as r:
-                return r.status == 200
-    except Exception as e:
-        print(f"[SCANNER] Ошибка отправки в TG: {e}")
-        return False
+from telegram_notify import send_telegram
 
 
 def _dedup_key(signal: dict) -> tuple:

@@ -37,6 +37,59 @@ def load_last(days: int) -> list[dict]:
     return rows
 
 
+def filter_records_for_open_signals_in_last_days(records: list[dict], days: int) -> list[dict]:
+    """Оставляет строки только для signal_id, у которых OPEN попал в последние days дней (Москва)."""
+    cutoff = datetime.now(MOSCOW) - timedelta(days=days)
+    open_ids: set[str] = set()
+    for row in records:
+        if row.get("status") != "OPEN":
+            continue
+        sid = row.get("signal_id")
+        if not sid:
+            continue
+        ts_val = row.get("created_at") or row.get("ts")
+        if not isinstance(ts_val, str):
+            continue
+        try:
+            ts = datetime.fromisoformat(ts_val)
+        except ValueError:
+            continue
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=MOSCOW)
+        else:
+            ts = ts.astimezone(MOSCOW)
+        if ts >= cutoff:
+            open_ids.add(str(sid))
+    return [r for r in records if r.get("signal_id") and str(r.get("signal_id")) in open_ids]
+
+
+def filter_records_for_open_signals_in_current_month(records: list[dict]) -> list[dict]:
+    """OPEN с 1-го числа текущего месяца (Москва)."""
+    now = datetime.now(MOSCOW)
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    open_ids: set[str] = set()
+    for row in records:
+        if row.get("status") != "OPEN":
+            continue
+        sid = row.get("signal_id")
+        if not sid:
+            continue
+        ts_val = row.get("created_at") or row.get("ts")
+        if not isinstance(ts_val, str):
+            continue
+        try:
+            ts = datetime.fromisoformat(ts_val)
+        except ValueError:
+            continue
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=MOSCOW)
+        else:
+            ts = ts.astimezone(MOSCOW)
+        if ts >= month_start:
+            open_ids.add(str(sid))
+    return [r for r in records if r.get("signal_id") and str(r.get("signal_id")) in open_ids]
+
+
 def compute_stats(records: list[dict]) -> dict:
     """Считает TP/SL/NO_OUTCOME, winrate, по стратегиям."""
     by_signal: dict[str, dict] = {}

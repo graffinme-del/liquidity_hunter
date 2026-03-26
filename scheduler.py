@@ -1,13 +1,18 @@
 """
-Планировщик: ежедневный отчёт в 21:00 Москва.
+Планировщик: ежедневный отчёт в 21:00 Мск; по воскресеньям — неделя + окна 2–7 дн.;
+в последний день месяца — итог месяца.
 """
 import asyncio
 import os
 from datetime import datetime, timedelta, timezone
 
-import aiohttp
-
-from report import build_daily_report
+from report import (
+    build_daily_report,
+    build_monthly_report,
+    build_rolling_windows_report,
+    build_weekly_report,
+)
+from telegram_notify import send_telegram
 
 MOSCOW = timezone(timedelta(hours=3))
 REPORT_HOUR = 21
@@ -22,25 +27,11 @@ def _next_report_at() -> datetime:
     return run_at
 
 
-async def send_telegram(text: str) -> bool:
-    token = os.getenv("TELEGRAM_BOT_TOKEN")
-    chat_id = os.getenv("TELEGRAM_CHAT_ID")
-    if not token or not chat_id:
-        print("[SCHEDULER] TELEGRAM не настроен, отчёт не отправлен")
-        return False
-    url = f"https://api.telegram.org/bot{token}/sendMessage"
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(url, json={"chat_id": chat_id, "text": text}) as r:
-                return r.status == 200
-    except Exception as e:
-        print(f"[SCHEDULER] Ошибка: {e}")
-        return False
-
-
 async def run_scheduler():
-    """Ждёт 21:00, резолвит открытые сигналы, отправляет отчёт."""
+    """Ждёт 21:00, резолвит открытые сигналы, отправляет отчёты."""
     last_sent_date = None
+    last_weekly_sent_date = None
+    last_monthly_sent_date = None
     while True:
         now = datetime.now(MOSCOW)
         run_at = _next_report_at()
@@ -54,11 +45,30 @@ async def run_scheduler():
 
         try:
             from outcome_resolver import run_resolver
+
             await run_resolver(window_hours=24)
         except Exception as e:
             print(f"[SCHEDULER] Резолвер: {e}")
 
         report = build_daily_report()
-        await send_telegram(report)
+        await send_telegram(report, parse_mode=None)
         last_sent_date = now.date()
-        print("[SCHEDULER] Отчёт отправлен")
+        print("[SCHEDULER] Дневной отчёт отправлен")
+
+        if now.weekday() == 6 and last_weekly_sent_date != now.date():
+            try:
+                await send_telegram(build_weekly_report(), parse_mode=None)
+                await send_telegram(build_rolling_windows_report(), parse_mode=None)
+                last_weekly_sent_date = now.date()
+                print("[SCHEDULER] Недельные отчёты отправлены")
+            except Exception as e:
+                print(f"[SCHEDULER] Недельный отчёт: {e}")
+
+        tomorrow = now.date() + timedelta(days=1)
+        if tomorrow.month != now.month and last_monthly_sent_date != now.date():
+            try:
+                await send_telegram(build_monthly_report(), parse_mode=None)
+                last_monthly_sent_date = now.date()
+                print("[SCHEDULER] Месячный отчёт отправлен")
+            except Exception as e:
+                print(f"[SCHEDULER] Месячный отчёт: {e}")

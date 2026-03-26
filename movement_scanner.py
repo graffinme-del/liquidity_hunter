@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
 import random
 import time
 from typing import Any, Optional
@@ -14,6 +13,7 @@ import aiohttp
 
 import config
 from data.binance_client import BinanceClient
+from telegram_notify import ephemeral_delete_seconds, send_telegram
 from structure import atr_pct
 
 _last_alert_at: dict[str, float] = {}
@@ -199,24 +199,14 @@ async def run_movement_scan(send_tg: bool = True) -> list[dict]:
             del _last_alert_at[k]
 
     if send_tg and hits:
-        token = os.getenv("TELEGRAM_BOT_TOKEN")
-        chat_id = os.getenv("TELEGRAM_CHAT_ID")
-        if token and chat_id:
-            lines = ["<b>Резкое движение (15m)</b>", "Направление не указано — только волатильность.", ""]
-            for h in hits[:40]:
-                lines.append(_format_vol_tg_line(h))
-            if len(hits) > 40:
-                lines.append(f"... и ещё {len(hits) - 40}")
-            text = "\n".join(lines)
-            url = f"https://api.telegram.org/bot{token}/sendMessage"
-            try:
-                async with aiohttp.ClientSession() as session:
-                    async with session.post(
-                        url, json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"}
-                    ) as r:
-                        pass
-            except Exception as e:
-                print(f"[VOL] TG: {e}")
+        lines = ["<b>Резкое движение (15m)</b>", "Направление не указано — только волатильность.", ""]
+        for h in hits[:40]:
+            lines.append(_format_vol_tg_line(h))
+        if len(hits) > 40:
+            lines.append(f"... и ещё {len(hits) - 40}")
+        text = "\n".join(lines)
+        sec = ephemeral_delete_seconds()
+        await send_telegram(text, parse_mode="HTML", delete_after_sec=sec if sec > 0 else None)
 
     return hits
 

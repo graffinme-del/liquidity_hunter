@@ -3,12 +3,12 @@
 Не сигналы на вход — список уже оторвавшихся монет (для откатов, наблюдения и т.п.).
 """
 import asyncio
-import os
 
 import aiohttp
 
 import config
 from data.binance_client import BinanceClient
+from telegram_notify import ephemeral_delete_seconds, send_telegram
 from structure import ema20
 
 
@@ -72,21 +72,13 @@ async def run_screener(send_tg: bool = False) -> list[dict]:
     pumped.sort(key=lambda x: x["detach_pct"], reverse=True)
 
     if send_tg and pumped:
-        token = os.getenv("TELEGRAM_BOT_TOKEN")
-        chat_id = os.getenv("TELEGRAM_CHAT_ID")
-        if token and chat_id:
-            mn, mx = config.PUMP_EMA_DETACH_PCT_MIN, config.PUMP_EMA_DETACH_PCT_MAX
-            lines = [f"<b>Пампы ({mn:.0f}-{mx:.0f}% выше EMA20 1h)</b>"]
-            for p in pumped[:15]:
-                lines.append(f"  {p['symbol']}: +{p['detach_pct']}% от EMA")
-            text = "\n".join(lines)
-            url = f"https://api.telegram.org/bot{token}/sendMessage"
-            try:
-                async with aiohttp.ClientSession() as session:
-                    async with session.post(url, json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"}) as r:
-                        pass
-            except Exception as e:
-                print(f"[PUMP] TG: {e}")
+        mn, mx = config.PUMP_EMA_DETACH_PCT_MIN, config.PUMP_EMA_DETACH_PCT_MAX
+        lines = [f"<b>Пампы ({mn:.0f}-{mx:.0f}% выше EMA20 1h)</b>"]
+        for p in pumped[:15]:
+            lines.append(f"  {p['symbol']}: +{p['detach_pct']}% от EMA")
+        text = "\n".join(lines)
+        sec = ephemeral_delete_seconds()
+        await send_telegram(text, parse_mode="HTML", delete_after_sec=sec if sec > 0 else None)
 
     return pumped
 
