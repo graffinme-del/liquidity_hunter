@@ -18,12 +18,18 @@ git clone https://github.com/graffinme-del/liquidity_hunter.git .
 
 ## 2. Виртуальное окружение и зависимости
 
+На Ubuntu 24.04+ системный Python помечен как «externally managed» (PEP 668): `pip install` без venv выдаст ошибку — это ожидаемо. Нужно сначала создать каталог `venv`, потом активировать.
+
+При отсутствии модуля `venv`: `sudo apt install -y python3-venv python3-full`.
+
 ```bash
 cd ~/liquidity_hunter
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 ```
+
+Unit systemd в `deploy/systemd/` ожидает интерпретатор `venv/bin/python` (не `.venv`).
 
 ## 3. Конфиг
 
