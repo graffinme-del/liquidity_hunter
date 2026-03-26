@@ -20,7 +20,7 @@ def _stats_to_lines(title: str, stats: dict) -> list[str]:
     o = stats.get("outcomes", {})
     tp = o.get("TP", 0)
     sl = o.get("SL", 0)
-    no = o.get("NO_OUTCOME", 0)
+    pending = stats.get("pending", 0)
     wr = stats.get("winrate")
     wr_s = f"{wr}%" if wr is not None else "n/a"
     avg_rr = stats.get("avg_rr_planned") or "n/a"
@@ -31,8 +31,8 @@ def _stats_to_lines(title: str, stats: dict) -> list[str]:
         title,
         "",
         f"Сигналов: {stats.get('signals_total', 0)}",
-        f"TP: {tp} | SL: {sl} | Без исхода: {no}",
-        f"Winrate: {wr_s}",
+        f"TP: {tp} | SL: {sl} | В отслеживании (ещё не TP/SL): {pending}",
+        f"Winrate: {wr_s} — доля TP среди закрытых (TP+SL)",
         f"Ср. RR: {avg_rr} | MFE: {avg_mfe}% | MAE: {avg_mae}%",
     ]
 
@@ -106,11 +106,11 @@ def build_rolling_windows_report(windows: tuple[int, ...] = (2, 3, 4, 5, 6, 7)) 
         o = stats.get("outcomes", {})
         tp = o.get("TP", 0)
         sl = o.get("SL", 0)
-        no = o.get("NO_OUTCOME", 0)
+        pend = stats.get("pending", 0)
         wr = stats.get("winrate")
         wr_s = f"{wr}%" if wr is not None else "n/a"
         n = stats.get("signals_total", 0)
         lines.append(
-            f"• {d} дн.: сигналов {n} | TP={tp} SL={sl} | без исхода={no} | WR={wr_s}"
+            f"• {d} дн.: сигналов {n} | TP={tp} SL={sl} | в отслеж.={pend} | WR={wr_s}"
         )
     return "\n".join(lines)

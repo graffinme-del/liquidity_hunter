@@ -147,7 +147,7 @@ def filter_records_for_open_signals_in_current_month(records: list[dict]) -> lis
 
 
 def compute_stats(records: list[dict]) -> dict:
-    """Считает TP/SL/NO_OUTCOME, winrate, по стратегиям."""
+    """TP/SL и «в отслеживании»; winrate = TP/(TP+SL) по закрытым."""
     by_signal: dict[str, dict] = {}
     for row in records:
         sid = row.get("signal_id")
@@ -159,52 +159,75 @@ def compute_stats(records: list[dict]) -> dict:
         if row.get("resolved") or row.get("result") in ("TP", "SL", "NO_OUTCOME"):
             slot["resolved"] = row
 
-    outcomes = {"TP": 0, "SL": 0, "NO_OUTCOME": 0}
+    outcomes = {"TP": 0, "SL": 0}
+    pending = 0
     per_strategy: dict[str, dict] = {}
-    rr_values = []
-    mfe_values = []
-    mae_values = []
+    rr_values: list[float] = []
+    mfe_values: list[float] = []
+    mae_values: list[float] = []
 
     for item in by_signal.values():
         open_row = item.get("open")
         if not open_row:
             continue
         strategy = str(open_row.get("strategy", "UNKNOWN"))
-        st = per_strategy.setdefault(strategy, {"total": 0, "wins": 0})
-        st["total"] += 1
+        st = per_strategy.setdefault(
+            strategy,
+            {"tp": 0, "sl": 0, "pending": 0},
+        )
 
         rr = open_row.get("rr_planned")
         if isinstance(rr, (int, float)):
             rr_values.append(float(rr))
 
         resolved = item.get("resolved")
-        if isinstance(resolved, dict):
-            res = resolved.get("result")
-            if res in outcomes:
-                outcomes[res] += 1
-            if res == "TP":
-                st["wins"] += 1
+        if not isinstance(resolved, dict):
+            pending += 1
+            st["pending"] += 1
+            continue
+
+        res = resolved.get("result")
+        if res == "TP":
+            outcomes["TP"] += 1
+            st["tp"] += 1
             mfe = resolved.get("mfe_pct")
             mae = resolved.get("mae_pct")
             if isinstance(mfe, (int, float)):
                 mfe_values.append(float(mfe))
             if isinstance(mae, (int, float)):
                 mae_values.append(float(mae))
+        elif res == "SL":
+            outcomes["SL"] += 1
+            st["sl"] += 1
+            mfe = resolved.get("mfe_pct")
+            mae = resolved.get("mae_pct")
+            if isinstance(mfe, (int, float)):
+                mfe_values.append(float(mfe))
+            if isinstance(mae, (int, float)):
+                mae_values.append(float(mae))
+        else:
+            # NO_OUTCOME в старом логе или неизвестный — считаем «ещё не TP/SL»
+            pending += 1
+            st["pending"] += 1
 
-    winrate_by_strategy = {}
+    winrate_by_strategy: dict[str, float | None] = {}
     for strat, st in per_strategy.items():
-        t, w = st["total"], st["wins"]
-        winrate_by_strategy[strat] = round((w / t) * 100, 2) if t else None
+        tp_c, sl_c = st["tp"], st["sl"]
+        denom = tp_c + sl_c
+        winrate_by_strategy[strat] = round((tp_c / denom) * 100, 2) if denom else None
 
-    total = outcomes["TP"] + outcomes["SL"] + outcomes["NO_OUTCOME"]
-    winrate = round((outcomes["TP"] / total) * 100, 2) if total else None
+    closed = outcomes["TP"] + outcomes["SL"]
+    winrate = round((outcomes["TP"] / closed) * 100, 2) if closed else None
+
+    signals_total = len([x for x in by_signal.values() if x.get("open")])
 
     return {
         "outcomes": outcomes,
+        "pending": pending,
         "winrate": winrate,
         "winrate_by_strategy": winrate_by_strategy,
         "avg_rr_planned": round(sum(rr_values) / len(rr_values), 4) if rr_values else None,
         "avg_mfe_pct": round(sum(mfe_values) / len(mfe_values), 4) if mfe_values else None,
         "avg_mae_pct": round(sum(mae_values) / len(mae_values), 4) if mae_values else None,
-        "signals_total": sum(st["total"] for st in per_strategy.values()),
+        "signals_total": signals_total,
     }

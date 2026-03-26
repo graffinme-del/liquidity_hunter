@@ -105,7 +105,7 @@ async def run_resolver(window_hours: int | None = None) -> tuple[int, int, int]:
         return 0, 0, 0
 
     tp_sl = 0
-    no_outcome = 0
+    still_open = 0
     skipped = 0
 
     async with aiohttp.ClientSession() as session:
@@ -130,13 +130,13 @@ async def run_resolver(window_hours: int | None = None) -> tuple[int, int, int]:
             if result in ("TP", "SL"):
                 tp_sl += 1
             else:
-                no_outcome += 1
+                still_open += 1
 
     print(
-        f"[RESOLVER] Обработано: {len(signals)}, TP+SL: {tp_sl}, NO_OUTCOME: {no_outcome}, "
-        f"без свечей: {skipped}"
+        f"[RESOLVER] Сигналов: {len(signals)}, закрыто TP/SL: {tp_sl}, "
+        f"ещё без TP/SL (следим дальше): {still_open}, без свечей: {skipped}"
     )
-    return len(signals), tp_sl, no_outcome
+    return len(signals), tp_sl, still_open
 
 
 def main():

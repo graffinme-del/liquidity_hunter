@@ -1,5 +1,5 @@
 """
-Чтение сигналов и запись результатов (TP/SL/NO_OUTCOME).
+Чтение сигналов и запись результатов (только TP или SL; иначе сигнал остаётся OPEN).
 """
 import json
 from datetime import datetime, timedelta, timezone
@@ -38,7 +38,10 @@ def read_open_signals(start_at: datetime, end_at: datetime) -> list[dict]:
             if not sid:
                 continue
             if row.get("status") == "RESOLVED" or row.get("resolved") is True:
-                resolved_ids.add(sid)
+                # Закрыт только TP или SL; старые NO_OUTCOME не мешают дальше отслеживать сигнал
+                res = row.get("result")
+                if res in ("TP", "SL"):
+                    resolved_ids.add(sid)
 
     open_rows: list[dict] = []
     with STORAGE_PATH.open("r", encoding="utf-8") as f:
@@ -114,10 +117,10 @@ def resolve_outcome(
     signal: dict,
     high_price: float,
     low_price: float,
-) -> str:
+) -> str | None:
     """
-    Определяет TP/SL/NO_OUTCOME по high/low.
-    Возвращает result и вызывает append_resolved.
+    TP/SL по high/low за период. Запись в лог — только если тейк или стоп достигнут.
+    Если ни один уровень не задели — None (сигнал остаётся OPEN, проверим на следующем прогоне).
     """
     entry = float(signal["entry_price"])
     tp = float(signal["tp_price"])
@@ -140,7 +143,7 @@ def resolve_outcome(
     elif sl_hit:
         result = "SL"
     else:
-        result = "NO_OUTCOME"
+        return None
 
     append_resolved(
         signal_id=signal["signal_id"],
