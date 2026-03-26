@@ -7,8 +7,6 @@ Liquidity Hunter v1 — точка входа.
 import asyncio
 from datetime import datetime, timezone, timedelta
 
-from dotenv import load_dotenv
-
 import config
 from movement_scanner import run_movement_scan
 from pump_screener import run_screener
@@ -56,7 +54,6 @@ async def run_movement_loop():
 
 
 async def main():
-    load_dotenv()
     await asyncio.gather(
         run_scanner(),
         run_scheduler(),
@@ -67,4 +64,15 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    import traceback
+    from pathlib import Path
+
+    from dotenv import load_dotenv
+
+    # Явный путь к .env — не зависит от cwd
+    load_dotenv(Path(__file__).resolve().parent / ".env")
+    try:
+        asyncio.run(main())
+    except Exception:
+        traceback.print_exc()
+        raise

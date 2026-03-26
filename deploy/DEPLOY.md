@@ -82,6 +82,8 @@ sudo systemctl restart liquidity-hunter
 
 Проверка: `sudo systemctl status liquidity-hunter`
 
+Если **activating / exit-code 1**: логи — `sudo journalctl -u liquidity-hunter -n 80 --no-pager`. Часто: не сделан `git pull` (нет каталога `orientation/`), нет `.env` с `TELEGRAM_*`, или старый `config.py` без `ATR_MIN_PCT_15M` (обнови репозиторий целиком).
+
 ## 6. Статистика и отчёты
 
 - **Сигналы** логируются в `storage/signals.jsonl`
