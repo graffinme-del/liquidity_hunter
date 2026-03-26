@@ -23,13 +23,31 @@ def ephemeral_delete_seconds() -> int:
 
 async def _delete_message_after(chat_id: str, message_id: int, token: str, delay_sec: float) -> None:
     await asyncio.sleep(delay_sec)
-    url = f"https://api.telegram.org/bot{token}/deleteMessage"
+    await delete_message_now(chat_id, message_id, token)
+
+
+def schedule_delete_message(chat_id: str, message_id: int, token: str, delay_sec: float) -> None:
+    """Удалить сообщение через delay_sec секунд (фоновая задача)."""
+    if delay_sec <= 0:
+        asyncio.create_task(delete_message_now(chat_id, message_id, token))
+    else:
+        asyncio.create_task(_delete_message_after(chat_id, message_id, token, float(delay_sec)))
+
+
+async def delete_message_now(chat_id: str, message_id: int, token: str | None = None) -> bool:
+    """Мгновенное deleteMessage (сообщения пользователя или бота)."""
+    tok = token or os.getenv("TELEGRAM_BOT_TOKEN")
+    if not tok:
+        return False
+    url = f"https://api.telegram.org/bot{tok}/deleteMessage"
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(url, json={"chat_id": chat_id, "message_id": message_id}, timeout=15) as r:
                 await r.text()
+                return r.status == 200
     except Exception:
         logger.debug("deleteMessage failed", exc_info=True)
+        return False
 
 
 async def send_telegram(
@@ -60,9 +78,7 @@ async def send_telegram(
                             return ok
                         mid = data.get("result", {}).get("message_id")
                         if isinstance(mid, int):
-                            asyncio.create_task(
-                                _delete_message_after(str(cid), mid, token, float(delete_after_sec))
-                            )
+                            schedule_delete_message(str(cid), mid, token, float(delete_after_sec))
                     except (json.JSONDecodeError, TypeError):
                         pass
                 return ok

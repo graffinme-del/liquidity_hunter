@@ -1,10 +1,14 @@
 """
 Команды Telegram: winrate за период (как pnl_range в binance_pnl_bot).
 Долгий polling getUpdates; запускается параллельно со сканером в main.py.
+
+Удаление: сообщения пользователя (команды и даты) — сразу;
+ответы бота (подсказка, отчёт, ошибки) — через TELEGRAM_WINRATE_BOT_MSG_DELETE_SEC (по умолчанию 120 с).
 """
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import re
@@ -13,7 +17,7 @@ from datetime import datetime, timedelta, timezone
 import aiohttp
 
 from report import build_winrate_range_report
-from telegram_notify import send_telegram
+from telegram_notify import delete_message_now, schedule_delete_message, send_telegram
 
 log = logging.getLogger(__name__)
 
@@ -68,11 +72,42 @@ def _allowed_chat(chat_id: str) -> bool:
     return chat_id == allowed
 
 
-async def _reply(session: aiohttp.ClientSession, token: str, chat_id: str, text: str) -> None:
+def _winrate_bot_msg_ttl_sec() -> int:
+    try:
+        return max(0, int(os.getenv("TELEGRAM_WINRATE_BOT_MSG_DELETE_SEC", "120")))
+    except ValueError:
+        return 120
+
+
+def _delete_user_message_later(chat_id: str, user_message_id: int | None, token: str) -> None:
+    if user_message_id is None:
+        return
+    asyncio.create_task(delete_message_now(chat_id, user_message_id, token))
+
+
+def _schedule_bot_message_delete(
+    chat_id: str, bot_message_id: int | None, token: str, ttl_sec: int,
+) -> None:
+    if bot_message_id is None or ttl_sec <= 0:
+        return
+    schedule_delete_message(chat_id, bot_message_id, token, float(ttl_sec))
+
+
+async def _reply(
+    session: aiohttp.ClientSession, token: str, chat_id: str, text: str,
+) -> int | None:
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     payload = {"chat_id": chat_id, "text": text, "parse_mode": "HTML"}
     async with session.post(url, json=payload, timeout=30) as r:
-        await r.text()
+        body = await r.text()
+    try:
+        data = json.loads(body)
+        if data.get("ok"):
+            mid = data.get("result", {}).get("message_id")
+            return int(mid) if isinstance(mid, int) else None
+    except (json.JSONDecodeError, TypeError, ValueError):
+        pass
+    return None
 
 
 async def run_telegram_listener() -> None:
@@ -124,12 +159,20 @@ async def run_telegram_listener() -> None:
             await asyncio.sleep(3)
             continue
 
+        ttl = _winrate_bot_msg_ttl_sec()
+
         for update in data.get("result", []):
             offset = max(offset, update.get("update_id", 0) + 1)
             message = update.get("message", {})
             text = (message.get("text") or "").strip()
             chat = message.get("chat", {})
             chat_id = str(chat.get("id", "")).strip()
+            user_msg_id = message.get("message_id")
+            if isinstance(user_msg_id, float):
+                user_msg_id = int(user_msg_id)
+            elif not isinstance(user_msg_id, int):
+                user_msg_id = None
+
             if not chat_id or not text:
                 continue
             if not _allowed_chat(chat_id):
@@ -140,14 +183,17 @@ async def run_telegram_listener() -> None:
             async with aiohttp.ClientSession() as session:
                 if cmd == "/cancel":
                     _pending_winrate_dates.discard(chat_id)
-                    await _reply(session, token, chat_id, "Отменено.")
+                    _delete_user_message_later(chat_id, user_msg_id, token)
+                    bot_mid = await _reply(session, token, chat_id, "Отменено.")
+                    _schedule_bot_message_delete(chat_id, bot_mid, token, ttl)
                     continue
 
                 if cmd in ("/winrate_range", "/winrate"):
                     parsed = _parse_dates(text, strip_command=True)
+                    _delete_user_message_later(chat_id, user_msg_id, token)
                     if not parsed:
                         _pending_winrate_dates.add(chat_id)
-                        await _reply(
+                        bot_mid = await _reply(
                             session,
                             token,
                             chat_id,
@@ -156,22 +202,35 @@ async def run_telegram_listener() -> None:
                             "Например: <code>22.03</code> или <code>10.03 22.03</code>\n\n"
                             "Отмена: /cancel",
                         )
+                        _schedule_bot_message_delete(chat_id, bot_mid, token, ttl)
                     else:
                         report_text = build_winrate_range_report(parsed[0], parsed[1])
-                        await send_telegram(report_text, chat_id=chat_id, parse_mode=None)
+                        await send_telegram(
+                            report_text,
+                            chat_id=chat_id,
+                            parse_mode=None,
+                            delete_after_sec=ttl if ttl > 0 else None,
+                        )
                     continue
 
                 if chat_id in _pending_winrate_dates:
                     _pending_winrate_dates.discard(chat_id)
+                    _delete_user_message_later(chat_id, user_msg_id, token)
                     parsed = _parse_dates(text, strip_command=False)
                     if not parsed:
-                        await _reply(
+                        bot_mid = await _reply(
                             session,
                             token,
                             chat_id,
                             "Не удалось распознать даты. Формат: DD.MM или DD.MM DD.MM",
                         )
+                        _schedule_bot_message_delete(chat_id, bot_mid, token, ttl)
                     else:
                         report_text = build_winrate_range_report(parsed[0], parsed[1])
-                        await send_telegram(report_text, chat_id=chat_id, parse_mode=None)
+                        await send_telegram(
+                            report_text,
+                            chat_id=chat_id,
+                            parse_mode=None,
+                            delete_after_sec=ttl if ttl > 0 else None,
+                        )
                     continue
