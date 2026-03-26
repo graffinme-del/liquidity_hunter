@@ -88,20 +88,44 @@ def _aggregate_high_low(klines: list[dict]) -> tuple[float, float] | None:
     return max(c["high"] for c in klines), min(c["low"] for c in klines)
 
 
-async def run_resolver(window_hours: int | None = None) -> tuple[int, int, int]:
+def _parse_from_date(s: str) -> datetime:
+    """DD.MM.YYYY, полночь МСК."""
+    parts = s.strip().split(".")
+    if len(parts) != 3:
+        raise ValueError("Ожидается DD.MM.YYYY")
+    d, m, y = int(parts[0]), int(parts[1]), int(parts[2])
+    moscow = timezone(timedelta(hours=3))
+    return datetime(y, m, d, 0, 0, 0, tzinfo=moscow)
+
+
+async def run_resolver(
+    window_hours: int | None = None,
+    start_at: datetime | None = None,
+    end_at: datetime | None = None,
+) -> tuple[int, int, int]:
     moscow = timezone(timedelta(hours=3))
     now = datetime.now(moscow)
-    if window_hours is None:
-        try:
-            window_hours = int(os.getenv("OUTCOME_RESOLVER_WINDOW_HOURS", "720"))
-        except ValueError:
-            window_hours = 720
-    window_hours = max(24, window_hours)
-    start_at = now - timedelta(hours=window_hours)
+    end_at = end_at or now
 
-    signals = read_open_signals(start_at, now)
+    if start_at is not None:
+        if start_at.tzinfo is None:
+            start_at = start_at.replace(tzinfo=moscow)
+        else:
+            start_at = start_at.astimezone(moscow)
+        range_label = f"с {start_at.strftime('%d.%m.%Y')} по {end_at.strftime('%d.%m.%Y %H:%M')} МСК"
+    else:
+        if window_hours is None:
+            try:
+                window_hours = int(os.getenv("OUTCOME_RESOLVER_WINDOW_HOURS", "720"))
+            except ValueError:
+                window_hours = 720
+        window_hours = max(24, window_hours)
+        start_at = now - timedelta(hours=window_hours)
+        range_label = f"последние {window_hours} ч (по дате создания OPEN)"
+
+    signals = read_open_signals(start_at, end_at)
     if not signals:
-        print(f"[RESOLVER] Нет открытых сигналов за последние {window_hours} ч (по дате создания)")
+        print(f"[RESOLVER] Нет открытых сигналов: {range_label}")
         return 0, 0, 0
 
     tp_sl = 0
@@ -133,17 +157,43 @@ async def run_resolver(window_hours: int | None = None) -> tuple[int, int, int]:
                 still_open += 1
 
     print(
-        f"[RESOLVER] Сигналов: {len(signals)}, закрыто TP/SL: {tp_sl}, "
-        f"ещё без TP/SL (следим дальше): {still_open}, без свечей: {skipped}"
+        f"[RESOLVER] {range_label} | сигналов: {len(signals)}, закрыто TP/SL: {tp_sl}, "
+        f"ещё без TP/SL: {still_open}, без свечей: {skipped}"
     )
     return len(signals), tp_sl, still_open
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--window-hours", type=int, default=None, help="По умолчанию: env OUTCOME_RESOLVER_WINDOW_HOURS или 720")
+    parser = argparse.ArgumentParser(
+        description="Прогон резолвера: OPEN с датой создания в диапазоне → свечи до сейчас → TP/SL в лог.",
+    )
+    parser.add_argument(
+        "--window-hours",
+        type=int,
+        default=None,
+        help="Окно назад от сейчас (часы). По умолчанию OUTCOME_RESOLVER_WINDOW_HOURS или 720",
+    )
+    parser.add_argument(
+        "--month-start",
+        action="store_true",
+        help="Взять все OPEN с 1-го числа текущего месяца (МСК) до сейчас",
+    )
+    parser.add_argument(
+        "--from-date",
+        type=str,
+        default=None,
+        metavar="DD.MM.YYYY",
+        help="Начало периода по дате создания сигнала (альтернатива --month-start)",
+    )
     args = parser.parse_args()
-    asyncio.run(run_resolver(window_hours=args.window_hours))
+    moscow = timezone(timedelta(hours=3))
+    now = datetime.now(moscow)
+    start_at: datetime | None = None
+    if args.month_start:
+        start_at = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    elif args.from_date:
+        start_at = _parse_from_date(args.from_date)
+    asyncio.run(run_resolver(window_hours=args.window_hours, start_at=start_at))
 
 
 if __name__ == "__main__":
