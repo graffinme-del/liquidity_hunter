@@ -9,6 +9,62 @@ STORAGE_PATH = Path(__file__).resolve().parent / "signals.jsonl"
 MOSCOW = timezone(timedelta(hours=3))
 
 
+def load_all_records() -> list[dict]:
+    """Все строки из signals.jsonl (для отчёта за произвольный период)."""
+    if not STORAGE_PATH.exists():
+        return []
+    rows: list[dict] = []
+    with STORAGE_PATH.open("r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            rows.append(row)
+    return rows
+
+
+def filter_open_signals_in_date_range(
+    records: list[dict],
+    start: datetime,
+    end: datetime,
+) -> list[dict]:
+    """
+    OPEN-сигналы с created_at в интервале [начало дня start, конец дня end] включительно (Москва).
+    start/end — как из парсера DD.MM (полночь); end — последний день диапазона включительно.
+    """
+    start_m = start.astimezone(MOSCOW) if start.tzinfo else start.replace(tzinfo=MOSCOW)
+    end_m = end.astimezone(MOSCOW) if end.tzinfo else end.replace(tzinfo=MOSCOW)
+    lower = start_m.replace(hour=0, minute=0, second=0, microsecond=0)
+    end_day = end_m.replace(hour=0, minute=0, second=0, microsecond=0)
+    upper = end_day + timedelta(days=1)
+
+    open_ids: set[str] = set()
+    for row in records:
+        if row.get("status") != "OPEN":
+            continue
+        sid = row.get("signal_id")
+        if not sid:
+            continue
+        ts_val = row.get("created_at") or row.get("ts")
+        if not isinstance(ts_val, str):
+            continue
+        try:
+            ts = datetime.fromisoformat(ts_val)
+        except ValueError:
+            continue
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=MOSCOW)
+        else:
+            ts = ts.astimezone(MOSCOW)
+        if lower <= ts < upper:
+            open_ids.add(str(sid))
+    return [r for r in records if r.get("signal_id") and str(r.get("signal_id")) in open_ids]
+
+
 def load_last(days: int) -> list[dict]:
     """Загружает все строки за последние days дней."""
     if not STORAGE_PATH.exists():

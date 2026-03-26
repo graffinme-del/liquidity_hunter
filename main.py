@@ -2,16 +2,19 @@
 """
 Liquidity Hunter v1 — точка входа.
 Запуск: python main.py
-Сканер + планировщик (отчёт в 21:00) + пампы (раз в час).
+Сканер + планировщик (отчёт в 21:00) + пампы (раз в час) + команды TG (/winrate_range).
 """
 import asyncio
 from datetime import datetime, timezone, timedelta
+
+from dotenv import load_dotenv
 
 import config
 from movement_scanner import run_movement_scan
 from pump_screener import run_screener
 from scanner import run_scanner
 from scheduler import run_scheduler
+from telegram_commands import run_telegram_listener
 
 
 def _is_trading_hours() -> bool:
@@ -53,7 +56,14 @@ async def run_movement_loop():
 
 
 async def main():
-    await asyncio.gather(run_scanner(), run_scheduler(), run_pump_loop(), run_movement_loop())
+    load_dotenv()
+    await asyncio.gather(
+        run_scanner(),
+        run_scheduler(),
+        run_pump_loop(),
+        run_movement_loop(),
+        run_telegram_listener(),
+    )
 
 
 if __name__ == "__main__":

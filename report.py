@@ -1,10 +1,14 @@
 """
 Формирование отчётов по статистике сигналов (signals.jsonl).
 """
+from datetime import datetime
+
 from storage.outcome_stats import (
     compute_stats,
+    filter_open_signals_in_date_range,
     filter_records_for_open_signals_in_current_month,
     filter_records_for_open_signals_in_last_days,
+    load_all_records,
     load_last,
 )
 
@@ -40,6 +44,22 @@ def _stats_to_lines(title: str, stats: dict) -> list[str]:
             lines.append(f"  {strat}: {wr_v}%")
 
     return lines
+
+
+def build_winrate_range_report(start: datetime, end: datetime) -> str:
+    """Winrate за произвольный период (дата OPEN сигнала, МСК)."""
+    raw = load_all_records()
+    rec = filter_open_signals_in_date_range(raw, start, end)
+    if start.date() == end.date():
+        title = f"📊 Winrate за {start.strftime('%d.%m.%Y')}"
+    else:
+        title = (
+            f"📊 Winrate за период {start.strftime('%d.%m.%Y')} — {end.strftime('%d.%m.%Y')}"
+        )
+    if not rec:
+        return f"{title}\n\nСигналов: 0"
+    stats = compute_stats(rec)
+    return "\n".join(_stats_to_lines(title, stats))
 
 
 def build_daily_report() -> str:
