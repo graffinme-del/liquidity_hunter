@@ -1,5 +1,5 @@
 """
-Сканер: цикл тиков — свечи → вола-фильтр → детекторы → лучший сигнал → TG.
+Сканер: цикл тиков — свечи → вола-фильтр → детекторы → ориентиры (OI / 1h / 15m) → лучший сигнал → TG.
 """
 import asyncio
 import os
@@ -13,6 +13,12 @@ import config
 from data.binance_client import BinanceClient
 from detectors import liquidity_sweep_reversal, liquidity_sweep_continuation, volatility_expansion
 from notifier import format_signal
+from orientation import (
+    apply_h1_orientation,
+    apply_oi_orientation,
+    build_oi_flow_context,
+    should_skip_coin_indicators,
+)
 from structure import atr_pct
 from storage.signal_log import log_signal
 from telegram_notify import send_telegram
@@ -34,6 +40,26 @@ def _apply_taker_bonus(cand: dict, taker_ratio: Optional[float]) -> None:
     elif direction == "SHORT" and taker_ratio > config.TAKER_RATIO_LONG_TRAP:
         cand["score"] = score + config.TAKER_TRAP_BONUS
         cand["taker_trap"] = True
+
+
+def _passes_orientation_pipeline(
+    cand: dict,
+    candles_15m: list[dict],
+    candles_1h: list[dict],
+    oi_flow_ctx: dict,
+) -> bool:
+    """
+    Ориентиры OI → 1h → 15m EMA/MACD.
+    Возвращает False, если кандидата не брать.
+    """
+    if apply_oi_orientation(cand, oi_flow_ctx):
+        return False
+    if apply_h1_orientation(cand, candles_1h):
+        return False
+    skip_coin, _reason = should_skip_coin_indicators(str(cand.get("direction", "")), candles_15m)
+    if skip_coin:
+        return False
+    return True
 
 
 def _is_trading_hours() -> bool:
@@ -85,6 +111,7 @@ async def run_tick(
 
     candidates: list[dict] = []
     now = time.time()
+    kl_1h_limit = int(os.getenv("H1_KLINES_LIMIT", "80"))
 
     # Sweep: только закрытые свечи; cont/exp: всегда 15m
     tf = config.SIGNAL_TIMEFRAME
@@ -92,12 +119,16 @@ async def run_tick(
         try:
             candles_15m = await client.get_klines(symbol, "15m", 100)
             candles_tf = await client.get_klines(symbol, tf, 100) if tf != "15m" else candles_15m
-            candles_1h = await client.get_klines(symbol, "1h", 50)
+            candles_1h = await client.get_klines(symbol, "1h", kl_1h_limit)
             if len(candles_tf) < config.SWEEP_MIN_CANDLES or len(candles_1h) < 20:
                 continue
 
             atr_pct_1h = atr_pct(candles_1h, 14)
             if atr_pct_1h is not None and atr_pct_1h < config.ATR_MIN_PCT_1H:
+                continue
+
+            atr_pct_15m = atr_pct(candles_15m, 14)
+            if atr_pct_15m is not None and atr_pct_15m < config.ATR_MIN_PCT_15M:
                 continue
 
             # Только закрытые свечи — исключаем формирующуюся
@@ -114,13 +145,20 @@ async def run_tick(
             if vol_avg > 0 and vol_last < vol_avg * config.VOLUME_LAST_MIN_RATIO:
                 continue
 
-            oi_hist = await client.get_open_interest_hist(symbol, tf, 3)
+            # OI для детекторов — период SIGNAL_TIMEFRAME; для ориентира OI+цена нужен 15m
+            oi_hist_15m = await client.get_open_interest_hist(symbol, "15m", 5)
+            oi_hist = oi_hist_15m if tf == "15m" else await client.get_open_interest_hist(symbol, tf, 5)
             oi_ctx = None
             if len(oi_hist) >= 2:
                 oi_now = oi_hist[-1].get("open_interest", 0)
                 oi_prev = oi_hist[-2].get("open_interest", 0)
                 if oi_prev and oi_prev > 0:
                     oi_ctx = {"oi_change_pct": (oi_now - oi_prev) / oi_prev * 100}
+
+            oi_flow_ctx = build_oi_flow_context(
+                candles_15m,
+                oi_hist_15m if len(oi_hist_15m) >= 2 else None,
+            )
 
             taker = await client.get_taker_long_short(symbol, "15m", 2)
             taker_ratio = None
@@ -131,16 +169,22 @@ async def run_tick(
 
             cand = liquidity_sweep_reversal.detect(symbol, closed_tf, candles_1h, atr_pct_1h, oi_ctx)
             if cand:
+                cand.setdefault("meta", {})
                 _apply_taker_bonus(cand, taker_ratio)
-                candidates.append(cand)
+                if _passes_orientation_pipeline(cand, candles_15m, candles_1h, oi_flow_ctx):
+                    candidates.append(cand)
             cand = liquidity_sweep_continuation.detect(symbol, candles_15m, candles_1h, atr_pct_1h)
             if cand:
+                cand.setdefault("meta", {})
                 _apply_taker_bonus(cand, taker_ratio)
-                candidates.append(cand)
+                if _passes_orientation_pipeline(cand, candles_15m, candles_1h, oi_flow_ctx):
+                    candidates.append(cand)
             cand = volatility_expansion.detect(symbol, candles_15m, candles_1h, atr_pct_1h, oi_ctx)
             if cand:
+                cand.setdefault("meta", {})
                 _apply_taker_bonus(cand, taker_ratio)
-                candidates.append(cand)
+                if _passes_orientation_pipeline(cand, candles_15m, candles_1h, oi_flow_ctx):
+                    candidates.append(cand)
 
         except Exception as e:
             print(f"[SCANNER] Ошибка {symbol}: {e}")
@@ -170,30 +214,59 @@ async def run_scanner():
         client = BinanceClient(session)
         print("[SCANNER] Liquidity Hunter v1 запущен")
 
+
+
         while True:
+
             try:
+
                 winner, _ = await run_tick(client, last_sent)
+
                 if winner and _is_trading_hours():
+
                     text = format_signal(winner)
+
                     print(f"\n[СИГНАЛ]\n{text}\n")
+
                     await send_telegram(text)
+
                     try:
+
                         log_signal(winner)
+
                     except Exception as e:
+
                         print(f"[SCANNER] Ошибка логирования: {e}")
+
                     now = time.time()
+
                     last_sent[_dedup_key(winner)] = now
+
                     # Очистка старых записей
+
                     cutoff = now - config.DEDUP_MINUTES * 60
+
                     for k in list(last_sent.keys()):
+
                         if last_sent[k] < cutoff:
+
                             del last_sent[k]
+
             except Exception as e:
+
                 print(f"[SCANNER] Ошибка тика: {e}")
 
+
+
             interval = _tick_interval()
+
             await asyncio.sleep(interval)
 
 
+
+
+
 if __name__ == "__main__":
+
     asyncio.run(run_scanner())
+
