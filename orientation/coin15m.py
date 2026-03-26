@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import os
 
-from .indicators import closes_from_candles, ema_series, macd_components
+from .ema_macd import closes_from_candles, ema_series, macd_components
 
 
 def _truthy(name: str, default: str = "0") -> bool:
