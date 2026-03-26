@@ -46,7 +46,8 @@ async def run_scheduler():
         try:
             from outcome_resolver import run_resolver
 
-            await run_resolver(window_hours=24)
+            # Окно по дате создания OPEN (часы). По умолчанию OUTCOME_RESOLVER_WINDOW_HOURS (720 = ~30 дн.).
+            await run_resolver()
         except Exception as e:
             print(f"[SCHEDULER] Резолвер: {e}")
 

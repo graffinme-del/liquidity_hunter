@@ -17,15 +17,30 @@ def _ensure_tz(dt: datetime) -> datetime:
 
 
 def read_open_signals(start_at: datetime, end_at: datetime) -> list[dict]:
-    """Читает OPEN сигналы за период, исключая уже резолвенные."""
+    """Читает OPEN сигналы за период создания, исключая уже резолвенные (два прохода: сначала все RESOLVED)."""
     if not STORAGE_PATH.exists():
         return []
 
     start_bound = _ensure_tz(start_at)
     end_bound = _ensure_tz(end_at)
     resolved_ids: set[str] = set()
-    open_rows: list[dict] = []
 
+    with STORAGE_PATH.open("r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            sid = str(row.get("signal_id", ""))
+            if not sid:
+                continue
+            if row.get("status") == "RESOLVED" or row.get("resolved") is True:
+                resolved_ids.add(sid)
+
+    open_rows: list[dict] = []
     with STORAGE_PATH.open("r", encoding="utf-8") as f:
         for line in f:
             line = line.strip()
@@ -37,11 +52,9 @@ def read_open_signals(start_at: datetime, end_at: datetime) -> list[dict]:
                 continue
 
             sid = str(row.get("signal_id", ""))
-            if row.get("status") == "RESOLVED" or row.get("resolved") is True:
-                resolved_ids.add(sid)
-                continue
-
             if row.get("status") != "OPEN":
+                continue
+            if sid in resolved_ids:
                 continue
 
             ts_raw = row.get("created_at") or row.get("ts")
@@ -53,8 +66,6 @@ def read_open_signals(start_at: datetime, end_at: datetime) -> list[dict]:
                 continue
             ts = _ensure_tz(ts)
             if not (start_bound <= ts <= end_bound):
-                continue
-            if sid in resolved_ids:
                 continue
 
             entry = float(row.get("entry_price", 0) or 0)
