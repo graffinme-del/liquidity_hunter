@@ -50,12 +50,34 @@ async def delete_message_now(chat_id: str, message_id: int, token: str | None = 
         return False
 
 
+# Inline-кнопка для принудительного обновления дайджеста волатильности (movement_scanner).
+VOLATILE_DIGEST_CALLBACK = "lh_volatile_top"
+VOLATILE_INLINE_KEYBOARD = {
+    "inline_keyboard": [[{"text": "🔥 Обновить список", "callback_data": VOLATILE_DIGEST_CALLBACK}]]
+}
+
+
+async def answer_callback_query(callback_query_id: str, token: str | None = None) -> None:
+    tok = token or os.getenv("TELEGRAM_BOT_TOKEN")
+    if not tok or not callback_query_id:
+        return
+    url = f"https://api.telegram.org/bot{tok}/answerCallbackQuery"
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, json={"callback_query_id": callback_query_id}, timeout=15) as r:
+                await r.text()
+    except Exception:
+        logger.debug("answerCallbackQuery failed", exc_info=True)
+
+
 async def send_telegram(
     text: str,
     *,
     chat_id: str | None = None,
     parse_mode: str | None = "HTML",
     delete_after_sec: int | None = None,
+    reply_markup: dict | None = None,
+    timeout_sec: int = 120,
 ) -> bool:
     token = os.getenv("TELEGRAM_BOT_TOKEN")
     cid = chat_id or os.getenv("TELEGRAM_CHAT_ID")
@@ -66,9 +88,11 @@ async def send_telegram(
     payload: dict = {"chat_id": cid, "text": text}
     if parse_mode:
         payload["parse_mode"] = parse_mode
+    if reply_markup is not None:
+        payload["reply_markup"] = reply_markup
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.post(url, json=payload, timeout=15) as r:
+            async with session.post(url, json=payload, timeout=timeout_sec) as r:
                 body = await r.text()
                 ok = r.status == 200
                 if ok and delete_after_sec and delete_after_sec > 0:

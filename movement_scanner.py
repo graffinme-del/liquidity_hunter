@@ -13,7 +13,7 @@ import aiohttp
 
 import config
 from data.binance_client import BinanceClient
-from telegram_notify import ephemeral_delete_seconds, send_telegram
+from telegram_notify import VOLATILE_INLINE_KEYBOARD, ephemeral_delete_seconds, send_telegram
 from structure import atr_pct
 
 _last_alert_at: dict[str, float] = {}
@@ -24,6 +24,22 @@ def _to_float(x: Any, default: float = 0.0) -> float:
         return float(x)
     except (TypeError, ValueError):
         return default
+
+
+def build_volatile_alert_text(hits: list[dict]) -> str:
+    """Тот же текст, что периодически шлёт run_movement_scan (список резких движений)."""
+    if not hits:
+        return (
+            "<b>Резкое движение (15m)</b>\n"
+            "Направление не указано — только волатильность.\n\n"
+            "<i>Сейчас нет пар под текущие фильтры VOL_SCAN.</i>"
+        )
+    lines = ["<b>Резкое движение (15m)</b>", "Направление не указано — только волатильность.", ""]
+    for h in hits[:40]:
+        lines.append(_format_vol_tg_line(h))
+    if len(hits) > 40:
+        lines.append(f"... и ещё {len(hits) - 40}")
+    return "\n".join(lines)
 
 
 def _format_vol_tg_line(h: dict) -> str:
@@ -147,11 +163,14 @@ def _analyze_closed_15m(candles: list[dict]) -> Optional[dict]:
     }
 
 
-async def run_movement_scan(send_tg: bool = True) -> list[dict]:
+async def scan_movement_hits(*, respect_dedup: bool = True) -> list[dict]:
     """
-    Возвращает список {symbol, ...метрики} для пар с резким движением.
+    Сканирует рынок по правилам VOL_SCAN.
+    respect_dedup=True — не трогаем символы в окне VOL_SCAN_DEDUP (как периодический цикл).
+    respect_dedup=False — полный проход для ручного дайджеста, дедуп не пишем в _last_alert_at.
     """
     from dotenv import load_dotenv
+
     load_dotenv()
 
     hits: list[dict] = []
@@ -173,7 +192,7 @@ async def run_movement_scan(send_tg: bool = True) -> list[dict]:
 
         for symbol in symbols:
             try:
-                if symbol in _last_alert_at and now - _last_alert_at[symbol] < dedup_sec:
+                if respect_dedup and symbol in _last_alert_at and now - _last_alert_at[symbol] < dedup_sec:
                     pause = getattr(config, "SCAN_SYMBOL_PAUSE_SEC", 0) or 0
                     if pause > 0:
                         await asyncio.sleep(pause)
@@ -184,7 +203,8 @@ async def run_movement_scan(send_tg: bool = True) -> list[dict]:
                 if info:
                     info["symbol"] = symbol
                     hits.append(info)
-                    _last_alert_at[symbol] = now
+                    if respect_dedup:
+                        _last_alert_at[symbol] = now
 
             except Exception as e:
                 print(f"[VOL] {symbol}: {e}")
@@ -198,13 +218,32 @@ async def run_movement_scan(send_tg: bool = True) -> list[dict]:
         if _last_alert_at[k] < cutoff:
             del _last_alert_at[k]
 
+    return hits
+
+
+async def send_volatile_digest_manual(chat_id: str | None = None) -> None:
+    """Принудительно собрать и отправить тот же дайджест, что и периодический VOL-скан (с кнопкой обновления)."""
+    hits = await scan_movement_hits(respect_dedup=False)
+    text = build_volatile_alert_text(hits)
+    sec = ephemeral_delete_seconds()
+    await send_telegram(
+        text,
+        chat_id=chat_id,
+        parse_mode="HTML",
+        delete_after_sec=sec if sec > 0 else None,
+        reply_markup=VOLATILE_INLINE_KEYBOARD,
+        timeout_sec=120,
+    )
+
+
+async def run_movement_scan(send_tg: bool = True) -> list[dict]:
+    """
+    Возвращает список {symbol, ...метрики} для пар с резким движением.
+    """
+    hits = await scan_movement_hits(respect_dedup=True)
+
     if send_tg and hits:
-        lines = ["<b>Резкое движение (15m)</b>", "Направление не указано — только волатильность.", ""]
-        for h in hits[:40]:
-            lines.append(_format_vol_tg_line(h))
-        if len(hits) > 40:
-            lines.append(f"... и ещё {len(hits) - 40}")
-        text = "\n".join(lines)
+        text = build_volatile_alert_text(hits)
         sec = ephemeral_delete_seconds()
         await send_telegram(text, parse_mode="HTML", delete_after_sec=sec if sec > 0 else None)
 

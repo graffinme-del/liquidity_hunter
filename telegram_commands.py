@@ -16,10 +16,26 @@ from datetime import datetime, timedelta, timezone
 
 import aiohttp
 
+from movement_scanner import send_volatile_digest_manual
 from report import build_winrate_range_report
-from telegram_notify import delete_message_now, schedule_delete_message, send_telegram
+from telegram_notify import (
+    VOLATILE_DIGEST_CALLBACK,
+    answer_callback_query,
+    delete_message_now,
+    schedule_delete_message,
+    send_telegram,
+)
 
 log = logging.getLogger(__name__)
+
+_volatile_last_ts: dict[str, float] = {}
+
+
+def _volatile_cooldown_sec() -> float:
+    try:
+        return max(5.0, float(os.getenv("VOLATILE_DIGEST_MANUAL_COOLDOWN_SEC", "30") or "30"))
+    except (TypeError, ValueError):
+        return 30.0
 
 MOSCOW = timezone(timedelta(hours=3))
 
@@ -135,6 +151,10 @@ async def run_telegram_listener() -> None:
                         "description": "То же, что winrate_range (короткий вызов)",
                     },
                     {"command": "cancel", "description": "Отменить ввод дат"},
+                    {
+                        "command": "volatile",
+                        "description": "Топ волатильных (как авто-алерт, с кнопкой обновления)",
+                    },
                 ],
                 "scope": {"type": "all_private_chats"},
             },
@@ -144,14 +164,16 @@ async def run_telegram_listener() -> None:
             if r.status != 200:
                 log.warning("setMyCommands HTTP %s: %s", r.status, body[:200])
             else:
-                log.info("Меню команд Telegram зарегистрировано (winrate_range, winrate, cancel)")
+                log.info(
+                    "Меню команд Telegram зарегистрировано (winrate_range, winrate, cancel, volatile)",
+                )
 
     while True:
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.post(
                     get_updates_url,
-                    json={"timeout": 50, "offset": offset, "allowed_updates": ["message"]},
+                    json={"timeout": 50, "offset": offset, "allowed_updates": ["message", "callback_query"]},
                     timeout=60,
                 ) as response:
                     data = await response.json(content_type=None)
@@ -163,6 +185,39 @@ async def run_telegram_listener() -> None:
 
         for update in data.get("result", []):
             offset = max(offset, update.get("update_id", 0) + 1)
+
+            cq = update.get("callback_query")
+            if cq:
+                data_c = str(cq.get("data") or "").strip()
+                cq_id = str(cq.get("id") or "")
+                msg = cq.get("message") or {}
+                chat = msg.get("chat") or {}
+                chat_id = str(chat.get("id", "")).strip()
+                if not chat_id or not _allowed_chat(chat_id):
+                    continue
+                if data_c == VOLATILE_DIGEST_CALLBACK:
+                    import time as time_mod
+
+                    now = time_mod.time()
+                    cd = _volatile_cooldown_sec()
+                    last = _volatile_last_ts.get(chat_id, 0.0)
+                    if now - last < cd:
+                        wait = int(cd - (now - last) + 0.5)
+                        await answer_callback_query(cq_id, token)
+                        async with aiohttp.ClientSession() as session:
+                            bot_mid = await _reply(
+                                session,
+                                token,
+                                chat_id,
+                                f"⏳ Подождите ~{wait} с перед следующим обновлением.",
+                            )
+                            _schedule_bot_message_delete(chat_id, bot_mid, token, ttl)
+                        continue
+                    _volatile_last_ts[chat_id] = now
+                    await answer_callback_query(cq_id, token)
+                    await send_volatile_digest_manual(chat_id=chat_id)
+                continue
+
             message = update.get("message", {})
             text = (message.get("text") or "").strip()
             chat = message.get("chat", {})
@@ -186,6 +241,27 @@ async def run_telegram_listener() -> None:
                     _delete_user_message_later(chat_id, user_msg_id, token)
                     bot_mid = await _reply(session, token, chat_id, "Отменено.")
                     _schedule_bot_message_delete(chat_id, bot_mid, token, ttl)
+                    continue
+
+                if cmd == "/volatile":
+                    import time as time_mod
+
+                    _delete_user_message_later(chat_id, user_msg_id, token)
+                    now = time_mod.time()
+                    cd = _volatile_cooldown_sec()
+                    last = _volatile_last_ts.get(chat_id, 0.0)
+                    if now - last < cd:
+                        wait = int(cd - (now - last) + 0.5)
+                        bot_mid = await _reply(
+                            session,
+                            token,
+                            chat_id,
+                            f"⏳ Подождите ~{wait} с перед следующим запросом.",
+                        )
+                        _schedule_bot_message_delete(chat_id, bot_mid, token, ttl)
+                        continue
+                    _volatile_last_ts[chat_id] = now
+                    await send_volatile_digest_manual(chat_id=chat_id)
                     continue
 
                 if cmd in ("/winrate_range", "/winrate"):
