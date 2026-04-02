@@ -15,6 +15,8 @@ import re
 from datetime import datetime, timedelta, timezone
 
 import aiohttp
+from dotenv import load_dotenv
+from pathlib import Path
 
 from movement_scanner import send_volatile_digest_manual
 from report import build_winrate_range_report
@@ -82,10 +84,13 @@ def _parse_dates(text: str, *, strip_command: bool = True) -> tuple[datetime, da
 
 
 def _allowed_chat(chat_id: str) -> bool:
+    """Пустой TELEGRAM_CHAT_ID = все чаты. Иначе — один или несколько id через запятую (группа / личка)."""
     allowed = os.getenv("TELEGRAM_CHAT_ID", "").strip()
     if not allowed:
         return True
-    return chat_id == allowed
+    cid = (chat_id or "").strip()
+    allowed_ids = {x.strip() for x in allowed.split(",") if x.strip()}
+    return cid in allowed_ids
 
 
 def _winrate_bot_msg_ttl_sec() -> int:
@@ -126,19 +131,41 @@ async def _reply(
     return None
 
 
+async def _telegram_prepare_polling(session: aiohttp.ClientSession, token: str) -> None:
+    """Сброс webhook — иначе getUpdates не получает апдейты (частая причина «вчера работало, сегодня нет»)."""
+    info_url = f"https://api.telegram.org/bot{token}/getWebhookInfo"
+    del_url = f"https://api.telegram.org/bot{token}/deleteWebhook"
+    try:
+        async with session.get(info_url, timeout=20) as r:
+            body = await r.text()
+        print(f"[TG] getWebhookInfo: {body[:400]}", flush=True)
+        async with session.post(del_url, json={"drop_pending_updates": False}, timeout=20) as r:
+            body = await r.text()
+        print(f"[TG] deleteWebhook: {body[:300]}", flush=True)
+    except Exception:
+        log.exception("[TG] prepare polling")
+
+
 async def run_telegram_listener() -> None:
+    load_dotenv(Path(__file__).resolve().parent / ".env")
     token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
     if not token:
+        print("[TG] ОШИБКА: TELEGRAM_BOT_TOKEN пустой — listener не работает", flush=True)
         log.warning("TELEGRAM_BOT_TOKEN не задан — слушатель команд не запущен.")
         while True:
             await asyncio.sleep(3600)
 
     offset = 0
-    get_updates_url = f"https://api.telegram.org/bot{token}/getUpdates"
-    set_commands_url = f"https://api.telegram.org/bot{token}/setMyCommands"
+    base = f"https://api.telegram.org/bot{token}"
+    get_updates_url = f"{base}/getUpdates"
+    set_commands_url = f"{base}/setMyCommands"
+    webhook_info_url = f"{base}/getWebhookInfo"
+    delete_webhook_url = f"{base}/deleteWebhook"
+    allowed_updates_json = json.dumps(["message", "callback_query"])
 
-    async with aiohttp.ClientSession() as session:
-        async with session.post(
+    async with aiohttp.ClientSession() as http_session:
+        await _telegram_prepare_polling(http_session, token)
+        async with http_session.post(
             set_commands_url,
             json={
                 "commands": [
@@ -156,7 +183,6 @@ async def run_telegram_listener() -> None:
                         "description": "Топ волатильных (как авто-алерт, с кнопкой обновления)",
                     },
                 ],
-                "scope": {"type": "all_private_chats"},
             },
             timeout=20,
         ) as r:
@@ -168,82 +194,172 @@ async def run_telegram_listener() -> None:
                     "Меню команд Telegram зарегистрировано (winrate_range, winrate, cancel, volatile)",
                 )
 
-    while True:
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    get_updates_url,
-                    json={"timeout": 50, "offset": offset, "allowed_updates": ["message", "callback_query"]},
-                    timeout=60,
-                ) as response:
-                    data = await response.json(content_type=None)
-        except Exception:
-            await asyncio.sleep(3)
-            continue
+        print("[TG] long polling запущен (одна сессия, GET getUpdates)", flush=True)
+        poll_n = 0
+        while True:
+            poll_n += 1
+            try:
+                if poll_n % 30 == 1:
+                    async with http_session.get(webhook_info_url, timeout=25) as wr:
+                        wraw = await wr.text()
+                    try:
+                        wj = json.loads(wraw)
+                        wurl = (wj.get("result") or {}).get("url") or ""
+                        if wurl:
+                            print(f"[TG] ВНИМАНИЕ: снова висит webhook {wurl!r} — удаляю", flush=True)
+                            async with http_session.post(delete_webhook_url, json={"drop_pending_updates": False}, timeout=25) as dr:
+                                await dr.text()
+                    except (json.JSONDecodeError, TypeError):
+                        pass
 
-        ttl = _winrate_bot_msg_ttl_sec()
+                params = {
+                    "offset": offset,
+                    "timeout": 50,
+                    "allowed_updates": allowed_updates_json,
+                }
+                async with http_session.get(get_updates_url, params=params, timeout=aiohttp.ClientTimeout(total=70)) as response:
+                    raw = await response.text()
+                    if response.status != 200:
+                        print(f"[TG] getUpdates HTTP {response.status}: {raw[:600]}", flush=True)
+                        await asyncio.sleep(3)
+                        continue
+                    try:
+                        data = json.loads(raw)
+                    except json.JSONDecodeError:
+                        print(f"[TG] getUpdates не JSON: {raw[:400]}", flush=True)
+                        await asyncio.sleep(3)
+                        continue
+            except Exception:
+                log.exception("getUpdates network error")
+                await asyncio.sleep(3)
+                continue
 
-        for update in data.get("result", []):
-            offset = max(offset, update.get("update_id", 0) + 1)
+            if not isinstance(data, dict) or not data.get("ok"):
+                err = str(data)[:800]
+                print(f"[TG] getUpdates FAILED: {err}", flush=True)
+                log.warning("getUpdates not ok: %s", err)
+                await asyncio.sleep(2)
+                continue
 
-            cq = update.get("callback_query")
-            if cq:
-                data_c = str(cq.get("data") or "").strip()
-                cq_id = str(cq.get("id") or "")
-                msg = cq.get("message") or {}
-                chat = msg.get("chat") or {}
-                chat_id = str(chat.get("id", "")).strip()
-                if not chat_id or not _allowed_chat(chat_id):
-                    continue
-                if data_c == VOLATILE_DIGEST_CALLBACK:
+            if poll_n % 12 == 0:
+                print(f"[TG] heartbeat poll={poll_n} offset={offset} (listener жив)", flush=True)
+
+            results = data.get("result") or []
+            if results:
+                print(f"[TG] получено updates: {len(results)}", flush=True)
+
+            ttl = _winrate_bot_msg_ttl_sec()
+
+            for update in data.get("result", []):
+                offset = max(offset, update.get("update_id", 0) + 1)
+
+                cq = update.get("callback_query")
+                if cq:
+                    data_c = str(cq.get("data") or "").strip()
+                    cq_id = str(cq.get("id") or "")
+                    msg = cq.get("message") or {}
+                    chat = msg.get("chat") or {}
+                    raw_cid = chat.get("id")
+                    chat_id = str(raw_cid).strip() if raw_cid is not None else ""
+    
+                    print(
+                        f"[TG] callback button data={data_c!r} chat_id={chat_id!r} allowed={_allowed_chat(chat_id)}",
+                        flush=True,
+                    )
+    
+                    if not cq_id:
+                        continue
+    
+                    # Без answerCallbackQuery Telegram показывает «загрузку» на кнопке бесконечно.
+                    if not chat_id:
+                        await answer_callback_query(
+                            cq_id,
+                            token,
+                            text="Не удалось определить чат. Отправьте /volatile",
+                            show_alert=True,
+                        )
+                        log.warning("callback без message.chat.id: %s", str(cq)[:400])
+                        continue
+    
+                    if not _allowed_chat(chat_id):
+                        await answer_callback_query(
+                            cq_id,
+                            token,
+                            text="Чат не в TELEGRAM_CHAT_ID в .env — добавьте этот id",
+                            show_alert=True,
+                        )
+                        log.warning("callback: chat_id=%s не в TELEGRAM_CHAT_ID", chat_id)
+                        continue
+    
+                    if data_c != VOLATILE_DIGEST_CALLBACK:
+                        await answer_callback_query(
+                            cq_id,
+                            token,
+                            text="Устаревшая кнопка. Запросите /volatile снова.",
+                            show_alert=False,
+                        )
+                        continue
+    
                     import time as time_mod
-
+    
                     now = time_mod.time()
                     cd = _volatile_cooldown_sec()
                     last = _volatile_last_ts.get(chat_id, 0.0)
                     if now - last < cd:
                         wait = int(cd - (now - last) + 0.5)
-                        await answer_callback_query(cq_id, token)
-                        async with aiohttp.ClientSession() as session:
-                            bot_mid = await _reply(
-                                session,
-                                token,
-                                chat_id,
-                                f"⏳ Подождите ~{wait} с перед следующим обновлением.",
-                            )
-                            _schedule_bot_message_delete(chat_id, bot_mid, token, ttl)
+                        await answer_callback_query(
+                            cq_id,
+                            token,
+                            text=f"Подождите {wait} с",
+                            show_alert=False,
+                        )
                         continue
+    
                     _volatile_last_ts[chat_id] = now
                     await answer_callback_query(cq_id, token)
-                    await send_volatile_digest_manual(chat_id=chat_id)
-                continue
-
-            message = update.get("message", {})
-            text = (message.get("text") or "").strip()
-            chat = message.get("chat", {})
-            chat_id = str(chat.get("id", "")).strip()
-            user_msg_id = message.get("message_id")
-            if isinstance(user_msg_id, float):
-                user_msg_id = int(user_msg_id)
-            elif not isinstance(user_msg_id, int):
-                user_msg_id = None
-
-            if not chat_id or not text:
-                continue
-            if not _allowed_chat(chat_id):
-                continue
-
-            cmd = text.split()[0].split("@")[0].lower()
-
-            async with aiohttp.ClientSession() as session:
+                    try:
+                        await send_volatile_digest_manual(chat_id=chat_id)
+                    except Exception:
+                        log.exception("volatile digest (callback)")
+                        await _reply(
+                            http_session,
+                            token,
+                            chat_id,
+                            "⚠️ Не удалось собрать список. См. journalctl / лог сервиса.",
+                        )
+                    continue
+    
+                message = update.get("message", {})
+                text = (message.get("text") or "").strip()
+                chat = message.get("chat", {})
+                chat_id = str(chat.get("id", "")).strip()
+                user_msg_id = message.get("message_id")
+                if isinstance(user_msg_id, float):
+                    user_msg_id = int(user_msg_id)
+                elif not isinstance(user_msg_id, int):
+                    user_msg_id = None
+    
+                if not chat_id or not text:
+                    continue
+                if not _allowed_chat(chat_id):
+                    if os.getenv("TELEGRAM_CHAT_ID", "").strip():
+                        log.warning(
+                            "telegram: chat_id=%s не в TELEGRAM_CHAT_ID — команды игнорируются",
+                            chat_id,
+                        )
+                    continue
+    
+                cmd = text.split()[0].split("@")[0].lower()
+                print(f"[TG] входящее сообщение chat_id={chat_id} text={text[:120]!r}", flush=True)
+    
                 if cmd == "/cancel":
                     _pending_winrate_dates.discard(chat_id)
                     _delete_user_message_later(chat_id, user_msg_id, token)
-                    bot_mid = await _reply(session, token, chat_id, "Отменено.")
+                    bot_mid = await _reply(http_session, token, chat_id, "Отменено.")
                     _schedule_bot_message_delete(chat_id, bot_mid, token, ttl)
                     continue
 
-                if cmd == "/volatile":
+                if cmd in ("/volatile", "/volitile"):
                     import time as time_mod
 
                     _delete_user_message_later(chat_id, user_msg_id, token)
@@ -253,7 +369,7 @@ async def run_telegram_listener() -> None:
                     if now - last < cd:
                         wait = int(cd - (now - last) + 0.5)
                         bot_mid = await _reply(
-                            session,
+                            http_session,
                             token,
                             chat_id,
                             f"⏳ Подождите ~{wait} с перед следующим запросом.",
@@ -261,7 +377,34 @@ async def run_telegram_listener() -> None:
                         _schedule_bot_message_delete(chat_id, bot_mid, token, ttl)
                         continue
                     _volatile_last_ts[chat_id] = now
-                    await send_volatile_digest_manual(chat_id=chat_id)
+                    try:
+                        await send_volatile_digest_manual(chat_id=chat_id)
+                    except Exception:
+                        log.exception("volatile digest (/volatile)")
+                        bot_mid = await _reply(
+                            http_session,
+                            token,
+                            chat_id,
+                            "⚠️ Не удалось собрать список. См. journalctl / лог сервиса.",
+                        )
+                        _schedule_bot_message_delete(chat_id, bot_mid, token, ttl)
+                    continue
+
+                if cmd.startswith("/") and cmd not in (
+                    "/cancel",
+                    "/volatile",
+                    "/volitile",
+                    "/winrate_range",
+                    "/winrate",
+                ):
+                    bot_mid = await _reply(
+                        http_session,
+                        token,
+                        chat_id,
+                        "Неизвестная команда.\n"
+                        "Волатильность: <code>/volatile</code> (не <code>/volitile</code>).",
+                    )
+                    _schedule_bot_message_delete(chat_id, bot_mid, token, ttl)
                     continue
 
                 if cmd in ("/winrate_range", "/winrate"):
@@ -270,7 +413,7 @@ async def run_telegram_listener() -> None:
                     if not parsed:
                         _pending_winrate_dates.add(chat_id)
                         bot_mid = await _reply(
-                            session,
+                            http_session,
                             token,
                             chat_id,
                             "Введите даты следующим сообщением.\n"
@@ -295,7 +438,7 @@ async def run_telegram_listener() -> None:
                     parsed = _parse_dates(text, strip_command=False)
                     if not parsed:
                         bot_mid = await _reply(
-                            session,
+                            http_session,
                             token,
                             chat_id,
                             "Не удалось распознать даты. Формат: DD.MM или DD.MM DD.MM",
