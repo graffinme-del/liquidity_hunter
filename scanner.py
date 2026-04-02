@@ -229,7 +229,13 @@ async def run_scanner():
 
                     print(f"\n[СИГНАЛ]\n{text}\n")
 
-                    await send_telegram(text)
+                    tg_ok = await send_telegram(text)
+                    if not tg_ok:
+                        print(
+                            "[SCANNER] send_telegram вернул False — сообщение в TG не ушло "
+                            "(проверьте TELEGRAM_BOT_TOKEN и TELEGRAM_CHAT_ID, см. строки [TG] выше).",
+                            flush=True,
+                        )
 
                     try:
 

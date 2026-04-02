@@ -21,10 +21,10 @@ def _to_float(x, default: float = 0.0) -> float:
         return default
 
 
-async def run_screener(send_tg: bool = False) -> list[dict]:
+async def run_screener(send_tg: bool = False) -> tuple[list[dict], bool]:
     """
-    Возвращает список монет с пампом (цена 20–35% выше EMA20 1h).
-    Каждый элемент: {symbol, close, ema20, detach_pct, volume_24h}
+    Возвращает (список пампов, tg_ok).
+    tg_ok: если в TG не слали, или sendMessage прошёл успешно.
     """
     from dotenv import load_dotenv
     load_dotenv()
@@ -71,22 +71,23 @@ async def run_screener(send_tg: bool = False) -> list[dict]:
     # Сортируем по отрыву (сильнее = выше)
     pumped.sort(key=lambda x: x["detach_pct"], reverse=True)
 
-    if send_tg and pumped:
-        mn, mx = config.PUMP_EMA_DETACH_PCT_MIN, config.PUMP_EMA_DETACH_PCT_MAX
-        lines = [f"<b>Пампы ({mn:.0f}-{mx:.0f}% выше EMA20 1h)</b>"]
-        for p in pumped[:15]:
-            lines.append(f"  {p['symbol']}: +{p['detach_pct']}% от EMA")
-        text = "\n".join(lines)
-        sec = ephemeral_delete_seconds()
-        await send_telegram(text, parse_mode="HTML", delete_after_sec=sec if sec > 0 else None)
+    if not send_tg or not pumped:
+        return pumped, True
 
-    return pumped
+    mn, mx = config.PUMP_EMA_DETACH_PCT_MIN, config.PUMP_EMA_DETACH_PCT_MAX
+    lines = [f"<b>Пампы ({mn:.0f}-{mx:.0f}% выше EMA20 1h)</b>"]
+    for p in pumped[:15]:
+        lines.append(f"  {p['symbol']}: +{p['detach_pct']}% от EMA")
+    text = "\n".join(lines)
+    sec = ephemeral_delete_seconds()
+    tg_ok = await send_telegram(text, parse_mode="HTML", delete_after_sec=sec if sec > 0 else None)
+    return pumped, tg_ok
 
 
 def main():
     import sys
     send_tg = "--tg" in sys.argv
-    pumped = asyncio.run(run_screener(send_tg=send_tg))
+    pumped, _ = asyncio.run(run_screener(send_tg=send_tg))
     if not pumped:
         print(f"Пампов ({config.PUMP_EMA_DETACH_PCT_MIN:.0f}-{config.PUMP_EMA_DETACH_PCT_MAX:.0f}% от EMA) нет.")
         return

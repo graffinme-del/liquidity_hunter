@@ -319,6 +319,7 @@ async def run_telegram_listener() -> None:
                     await answer_callback_query(cq_id, token)
                     try:
                         await send_volatile_digest_manual(chat_id=chat_id)
+                        print(f"[TG] callback: дайджест отправлен (chat_id={chat_id})", flush=True)
                     except Exception:
                         log.exception("volatile digest (callback)")
                         await _reply(
@@ -379,6 +380,7 @@ async def run_telegram_listener() -> None:
                     _volatile_last_ts[chat_id] = now
                     try:
                         await send_volatile_digest_manual(chat_id=chat_id)
+                        print(f"[TG] /volatile: дайджест отправлен (chat_id={chat_id})", flush=True)
                     except Exception:
                         log.exception("volatile digest (/volatile)")
                         bot_mid = await _reply(

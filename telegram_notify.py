@@ -7,10 +7,34 @@ import asyncio
 import json
 import logging
 import os
+import re
+from pathlib import Path
 
 import aiohttp
 
 logger = logging.getLogger(__name__)
+
+
+def _load_dotenv_from_project() -> None:
+    """Подтягиваем .env из каталога проекта (на случай другого cwd у процесса)."""
+    try:
+        from dotenv import load_dotenv
+
+        env_path = Path(__file__).resolve().parent / ".env"
+        load_dotenv(env_path)
+    except Exception:
+        pass
+
+
+def _telegram_chat_id_resolved() -> str | None:
+    raw = (os.getenv("TELEGRAM_CHAT_ID") or "").strip()
+    if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in "\"'":
+        raw = raw[1:-1].strip()
+    return raw or None
+
+
+def _strip_html_for_plain_fallback(text: str) -> str:
+    return re.sub(r"<[^>]+>", "", text)
 
 
 def ephemeral_delete_seconds() -> int:
@@ -57,14 +81,29 @@ VOLATILE_INLINE_KEYBOARD = {
 }
 
 
-async def answer_callback_query(callback_query_id: str, token: str | None = None) -> None:
+async def answer_callback_query(
+    callback_query_id: str,
+    token: str | None = None,
+    *,
+    text: str | None = None,
+    show_alert: bool = False,
+) -> None:
+    """
+    Обязательно вызвать для каждого callback_query (иначе у кнопки «вечная загрузка»).
+    text — короткая подсказка (до ~200 симв.); show_alert — всплывающее окно вместо тоста.
+    """
     tok = token or os.getenv("TELEGRAM_BOT_TOKEN")
     if not tok or not callback_query_id:
         return
     url = f"https://api.telegram.org/bot{tok}/answerCallbackQuery"
+    payload: dict = {"callback_query_id": callback_query_id}
+    if text:
+        payload["text"] = text[:200]
+    if show_alert:
+        payload["show_alert"] = True
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.post(url, json={"callback_query_id": callback_query_id}, timeout=15) as r:
+            async with session.post(url, json=payload, timeout=15) as r:
                 await r.text()
     except Exception:
         logger.debug("answerCallbackQuery failed", exc_info=True)
@@ -79,33 +118,69 @@ async def send_telegram(
     reply_markup: dict | None = None,
     timeout_sec: int = 120,
 ) -> bool:
-    token = os.getenv("TELEGRAM_BOT_TOKEN")
-    cid = chat_id or os.getenv("TELEGRAM_CHAT_ID")
+    _load_dotenv_from_project()
+    token = (os.getenv("TELEGRAM_BOT_TOKEN") or "").strip()
+    cid = chat_id or _telegram_chat_id_resolved()
     if not token or not cid:
-        print("[TG] TELEGRAM_BOT_TOKEN или TELEGRAM_CHAT_ID не заданы")
+        print("[TG] ОШИБКА: TELEGRAM_BOT_TOKEN или TELEGRAM_CHAT_ID не заданы после загрузки .env", flush=True)
         return False
+    # Явно видно, в какой чат ушло сообщение (частая путаница: .env = группа, смотрите личку и наоборот).
+    print(f"[TG] sendMessage → chat_id={cid!r} символов={len(text)}", flush=True)
     url = f"https://api.telegram.org/bot{token}/sendMessage"
+
+    async def _post(payload: dict) -> tuple[bool, dict | None, str]:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, json=payload, timeout=timeout_sec) as r:
+                body = await r.text()
+                try:
+                    data = json.loads(body)
+                except json.JSONDecodeError:
+                    return False, None, body
+                return bool(data.get("ok")), data, body
+
     payload: dict = {"chat_id": cid, "text": text}
     if parse_mode:
         payload["parse_mode"] = parse_mode
     if reply_markup is not None:
         payload["reply_markup"] = reply_markup
+
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(url, json=payload, timeout=timeout_sec) as r:
-                body = await r.text()
-                ok = r.status == 200
-                if ok and delete_after_sec and delete_after_sec > 0:
-                    try:
-                        data = json.loads(body)
-                        if not data.get("ok"):
-                            return ok
-                        mid = data.get("result", {}).get("message_id")
-                        if isinstance(mid, int):
-                            schedule_delete_message(str(cid), mid, token, float(delete_after_sec))
-                    except (json.JSONDecodeError, TypeError):
-                        pass
-                return ok
+        ok, data, body = await _post(payload)
+        if not ok and parse_mode and data:
+            desc = str((data.get("description") or data.get("parameters", {}))).lower()
+            if "parse" in desc or "entities" in desc or "can't find" in desc:
+                plain = _strip_html_for_plain_fallback(text)
+                payload2 = {"chat_id": cid, "text": plain}
+                if reply_markup is not None:
+                    payload2["reply_markup"] = reply_markup
+                ok, data, body = await _post(payload2)
+                if ok:
+                    print("[TG] повтор без HTML (ошибка разметки)", flush=True)
+
+        if not ok:
+            err = body[:1200] if body else ""
+            print(f"[TG] sendMessage FAILED: {err}", flush=True)
+            logger.warning("send_telegram: %s", err[:500])
+            return False
+
+        result = data.get("result") or {} if data else {}
+        mid = result.get("message_id")
+        chat_obj = result.get("chat") or {}
+        chat_resp = chat_obj.get("id")
+        print(
+            f"[TG] sendMessage OK message_id={mid} chat_id={chat_resp} (отправлено в этот чат)",
+            flush=True,
+        )
+
+        if delete_after_sec and delete_after_sec > 0:
+            if isinstance(mid, int):
+                schedule_delete_message(str(cid), mid, token, float(delete_after_sec))
+                print(
+                    f"[TG] запланировано удаление сообщения через {delete_after_sec} с",
+                    flush=True,
+                )
+        return True
     except Exception as e:
-        print(f"[TG] Ошибка отправки: {e}")
+        print(f"[TG] send_telegram исключение: {e}", flush=True)
+        logger.warning("send_telegram: %s", e)
         return False

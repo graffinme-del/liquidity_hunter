@@ -5,6 +5,7 @@ Liquidity Hunter v1 — точка входа.
 Сканер + планировщик (отчёт в 21:00) + пампы (раз в час) + команды TG (/winrate_range).
 """
 import asyncio
+import logging
 from datetime import datetime, timezone, timedelta
 
 import config
@@ -13,6 +14,11 @@ from pump_screener import run_screener
 from scanner import run_scanner
 from scheduler import run_scheduler
 from telegram_commands import run_telegram_listener
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+)
 
 
 def _is_trading_hours() -> bool:
@@ -28,9 +34,16 @@ async def run_pump_loop():
     while True:
         if _is_trading_hours():
             try:
-                pumped = await run_screener(send_tg=True)
+                pumped, tg_ok = await run_screener(send_tg=True)
                 if pumped:
-                    print(f"[PUMP] Найдено {len(pumped)} пампов, отправлено в TG")
+                    if tg_ok:
+                        print(f"[PUMP] Найдено {len(pumped)} пампов, отправлено в TG")
+                    else:
+                        print(
+                            f"[PUMP] Найдено {len(pumped)} пампов, "
+                            f"отправка в TG НЕ УДАЛАСЬ — см. [TG] в journalctl и TELEGRAM_* в .env",
+                            flush=True,
+                        )
             except Exception as e:
                 print(f"[PUMP] Ошибка: {e}")
         await asyncio.sleep(interval_sec)
@@ -45,9 +58,16 @@ async def run_movement_loop():
     while True:
         if _is_trading_hours():
             try:
-                hits = await run_movement_scan(send_tg=True)
+                hits, tg_ok = await run_movement_scan(send_tg=True)
                 if hits:
-                    print(f"[VOL] Резкое движение: {len(hits)} пар, отправлено в TG")
+                    if tg_ok:
+                        print(f"[VOL] Резкое движение: {len(hits)} пар, отправлено в TG")
+                    else:
+                        print(
+                            f"[VOL] Резкое движение: {len(hits)} пар, "
+                            f"отправка в TG НЕ УДАЛАСЬ — проверьте TELEGRAM_BOT_TOKEN и TELEGRAM_CHAT_ID в .env",
+                            flush=True,
+                        )
             except Exception as e:
                 print(f"[VOL] Ошибка: {e}")
         await asyncio.sleep(interval_sec)
