@@ -79,6 +79,13 @@ IMPULSE_15M_MIN_QUOTE_VOL_24H = 50_000.0
 IMPULSE_15M_SYMBOL_SORT = "abs_change_24h"  # как у VOL: кто уже шевелится за сутки
 IMPULSE_15M_SHUFFLE = False
 IMPULSE_15M_DEDUP_MIN = 45       # не дублировать алерт по той же монете, мин
+# Объём: средний объём в окне импульса vs средний по свечам ДО окна (база MA)
+IMPULSE_15M_USE_VOLUME_MA = True
+IMPULSE_15M_VOL_MA_LOOKBACK = 20  # сколько закрытых свечей 15m до импульса для базы
+IMPULSE_15M_VOL_MIN_RATIO = 1.8   # (mean vol импульса) / (mean vol базы), выше = «всплеск»
+# Taker: агрегат buyVol/sellVol за k последних интервалов 15m (как окно импульса)
+IMPULSE_15M_USE_TAKER = True
+IMPULSE_15M_TAKER_MIN_RATIO = 1.08  # buy/sell по агрессивным сделкам, >1 = перекос в покупки
 
 # Сканер резкого движения (не топ по объёму — см. VOL_SCAN_SYMBOL_SORT)
 VOL_SCAN_ENABLED = True

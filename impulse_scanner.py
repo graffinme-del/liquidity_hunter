@@ -29,6 +29,29 @@ def _to_float(x: Any, default: float = 0.0) -> float:
         return default
 
 
+def _mean_volume(bars: list[dict]) -> float:
+    if not bars:
+        return 0.0
+    s = sum(_to_float(b.get("volume")) for b in bars)
+    return s / len(bars)
+
+
+def _volume_impulse_vs_ma(closed: list[dict], k: int, ma_lookback: int) -> tuple[float | None, float, float]:
+    """
+    Средний объём на свечу в окне импульса (последние k) vs средний объём в базе (ma_lookback свечей до окна).
+    Возвращает (ratio или None если мало данных, mean_impulse, mean_baseline).
+    """
+    if k < 1 or ma_lookback < 1 or len(closed) < k + ma_lookback:
+        return None, 0.0, 0.0
+    baseline_bars = closed[-(k + ma_lookback) : -k]
+    impulse_bars = closed[-k:]
+    mb = _mean_volume(baseline_bars)
+    mi = _mean_volume(impulse_bars)
+    if mb <= 0:
+        return None, mi, mb
+    return mi / mb, mi, mb
+
+
 def _impulse_long_pct_last_closed(closed: list[dict]) -> tuple[float, int]:
     """
     Максимальный лонг-импульс за последние 1–3 закрытые свечи 15m.
@@ -57,11 +80,10 @@ def _impulse_long_pct_last_closed(closed: list[dict]) -> tuple[float, int]:
     return best_pct, which
 
 
-def _analyze_impulse_15m(candles: list[dict]) -> Optional[dict]:
-    """Только закрытые свечи; последняя в данных может быть незакрыта — отбрасываем."""
-    if len(candles) < 5:
-        return None
-    closed = candles[:-1] if len(candles) > 1 else candles
+def _analyze_impulse_15m_price_volume(closed: list[dict]) -> Optional[dict]:
+    """
+    Цена + объём (без taker). Только закрытые свечи; последняя в klines может быть незакрыта — не в closed.
+    """
     if len(closed) < 3:
         return None
     last = closed[-1]
@@ -72,22 +94,65 @@ def _analyze_impulse_15m(candles: list[dict]) -> Optional[dict]:
     mn = getattr(config, "IMPULSE_15M_MIN_PCT", 15.0)
     if pct < mn:
         return None
+
+    ma_lb = getattr(config, "IMPULSE_15M_VOL_MA_LOOKBACK", 20)
+    use_vol = getattr(config, "IMPULSE_15M_USE_VOLUME_MA", True)
+    vol_ratio: float | None = None
+    vol_mean_imp = 0.0
+    vol_mean_base = 0.0
+    if use_vol:
+        vol_ratio, vol_mean_imp, vol_mean_base = _volume_impulse_vs_ma(closed, k, ma_lb)
+        min_vr = getattr(config, "IMPULSE_15M_VOL_MIN_RATIO", 1.8)
+        if vol_ratio is None or vol_ratio < min_vr:
+            return None
+
     return {
         "pct": round(pct, 2),
         "candles": k,
         "close": round(close, 8),
+        "vol_ratio": None if vol_ratio is None else round(vol_ratio, 2),
+        "vol_mean_impulse": round(vol_mean_imp, 2),
+        "vol_mean_baseline": round(vol_mean_base, 2),
     }
+
+
+async def _taker_buy_sell_ratio(
+    client: BinanceClient, symbol: str, k: int,
+) -> float | None:
+    """
+    Агрегированный buyVol/sellVol за k последних по времени интервалов 15m.
+    """
+    limit = max(k, 3)
+    rows = await client.get_taker_long_short(symbol, "15m", limit=limit)
+    if not rows:
+        return None
+    rows_sorted = sorted(rows, key=lambda r: int(r.get("timestamp", 0)), reverse=True)
+    chunk = rows_sorted[:k]
+    buy_v = sum(_to_float(r.get("buy_vol")) for r in chunk)
+    sell_v = sum(_to_float(r.get("sell_vol")) for r in chunk)
+    if sell_v <= 1e-12:
+        return None
+    return buy_v / sell_v
 
 
 def build_impulse_alert_text(hits: list[dict]) -> str:
     mn = getattr(config, "IMPULSE_15M_MIN_PCT", 15.0)
+    use_vol = getattr(config, "IMPULSE_15M_USE_VOLUME_MA", True)
+    use_tk = getattr(config, "IMPULSE_15M_USE_TAKER", True)
     if not hits:
         return (
-            f"<b>Импульс 15m (≥{mn:.0f}% за 1–3 свечи)</b>\n"
+            f"<b>Импульс 15m (≥{mn:.0f}% + объём + taker)</b>\n"
             "<i>Сейчас нет пар под порог.</i>"
         )
+    filt = []
+    if use_vol:
+        filt.append(f"vol ≥{getattr(config, 'IMPULSE_15M_VOL_MIN_RATIO', 1.8):.1f}× к базе")
+    if use_tk:
+        filt.append(f"taker buy/sell ≥{getattr(config, 'IMPULSE_15M_TAKER_MIN_RATIO', 1.08):.2f}")
+    sub = "; ".join(filt) if filt else "только цена"
     lines = [
         f"<b>Импульс 15m (≥{mn:.0f}% за 1–3 свечи)</b>",
+        f"Фильтры: {sub}",
         "Лонг: от open начала окна до close последней закрытой свечи.",
         "",
     ]
@@ -95,7 +160,15 @@ def build_impulse_alert_text(hits: list[dict]) -> str:
         sym = html.escape(str(h.get("symbol", "?")))
         pct = h.get("pct", 0)
         k = h.get("candles", 0)
-        lines.append(f"  <b>{sym}</b> +{pct}% ({k}×15m подряд)")
+        vr = h.get("vol_ratio")
+        tr = h.get("taker_ratio")
+        extra = []
+        if vr is not None:
+            extra.append(f"vol×{vr}")
+        if tr is not None:
+            extra.append(f"taker {tr:.2f}")
+        tail = f" — {' '.join(extra)}" if extra else ""
+        lines.append(f"  <b>{sym}</b> +{pct}% ({k}×15m){tail}")
     if len(hits) > 25:
         lines.append(f"... и ещё {len(hits) - 25}")
     return "\n".join(lines)
@@ -138,12 +211,24 @@ async def scan_impulse_hits(*, respect_dedup: bool = True) -> list[dict]:
                     continue
 
                 candles = await client.get_klines(symbol, "15m", 100)
-                info = _analyze_impulse_15m(candles)
-                if info:
-                    info["symbol"] = symbol
-                    hits.append(info)
-                    if respect_dedup:
-                        _last_impulse_alert_at[symbol] = now
+                if len(candles) < 5:
+                    continue
+                closed = candles[:-1] if len(candles) > 1 else candles
+                info = _analyze_impulse_15m_price_volume(closed)
+                if not info:
+                    continue
+                use_taker = getattr(config, "IMPULSE_15M_USE_TAKER", True)
+                if use_taker:
+                    kr = int(info["candles"])
+                    taker_r = await _taker_buy_sell_ratio(client, symbol, kr)
+                    min_tr = getattr(config, "IMPULSE_15M_TAKER_MIN_RATIO", 1.08)
+                    if taker_r is None or taker_r < min_tr:
+                        continue
+                    info["taker_ratio"] = round(taker_r, 3)
+                info["symbol"] = symbol
+                hits.append(info)
+                if respect_dedup:
+                    _last_impulse_alert_at[symbol] = now
 
             except Exception as e:
                 print(f"[IMPULSE] {symbol}: {e}")
