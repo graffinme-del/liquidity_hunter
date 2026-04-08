@@ -2,13 +2,14 @@
 """
 Liquidity Hunter v1 — точка входа.
 Запуск: python main.py
-Сканер + планировщик (отчёт в 21:00) + пампы (раз в час) + команды TG (/winrate_range).
+Сканер + планировщик + импульсы 15m + пампы 1h + VOL + команды TG.
 """
 import asyncio
 import logging
 from datetime import datetime, timezone, timedelta
 
 import config
+from impulse_scanner import run_impulse_scan
 from movement_scanner import run_movement_scan
 from pump_screener import run_screener
 from scanner import run_scanner
@@ -73,10 +74,39 @@ async def run_movement_loop():
         await asyncio.sleep(interval_sec)
 
 
+async def run_impulse_loop():
+    """15m: быстрый рост ≥N% за 1–3 свечи (config IMPULSE_15M_*)."""
+    if not getattr(config, "IMPULSE_15M_ENABLED", False):
+        return
+    await asyncio.sleep(240)  # старт чуть позже VOL, чтобы не бить API одним фронтом
+    interval_sec = getattr(config, "IMPULSE_15M_INTERVAL_MIN", 15) * 60
+    while True:
+        if _is_trading_hours():
+            try:
+                hits, tg_ok = await run_impulse_scan(send_tg=True)
+                if hits:
+                    if tg_ok:
+                        print(
+                            f"[IMPULSE] Импульс 15m: {len(hits)} пар (≥{config.IMPULSE_15M_MIN_PCT:.0f}%), "
+                            f"отправлено в TG",
+                            flush=True,
+                        )
+                    else:
+                        print(
+                            f"[IMPULSE] Импульс 15m: {len(hits)} пар, "
+                            f"отправка в TG НЕ УДАЛАСЬ — см. [TG] в journalctl",
+                            flush=True,
+                        )
+            except Exception as e:
+                print(f"[IMPULSE] Ошибка: {e}")
+        await asyncio.sleep(interval_sec)
+
+
 async def main():
     await asyncio.gather(
         run_scanner(),
         run_scheduler(),
+        run_impulse_loop(),
         run_pump_loop(),
         run_movement_loop(),
         run_telegram_listener(),

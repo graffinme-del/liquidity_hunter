@@ -70,6 +70,16 @@ PUMP_EMA_DETACH_PCT_MIN = 20.0   # минимум % выше EMA20 1h
 PUMP_EMA_DETACH_PCT_MAX = 35.0   # максимум (сильнее = уже параболика)
 PUMP_CHECK_INTERVAL_MIN = 60     # проверка раз в час
 
+# Импульс 15m — быстрый отрыв вверх за 1–3 закрытые свечи (раньше, чем памп по EMA 1h)
+IMPULSE_15M_ENABLED = True
+IMPULSE_15M_MIN_PCT = 15.0       # минимум % роста (от open окна до close последней свечи)
+IMPULSE_15M_INTERVAL_MIN = 15    # как часто крутить сканер
+IMPULSE_15M_MAX_SYMBOLS = 200
+IMPULSE_15M_MIN_QUOTE_VOL_24H = 50_000.0
+IMPULSE_15M_SYMBOL_SORT = "abs_change_24h"  # как у VOL: кто уже шевелится за сутки
+IMPULSE_15M_SHUFFLE = False
+IMPULSE_15M_DEDUP_MIN = 45       # не дублировать алерт по той же монете, мин
+
 # Сканер резкого движения (не топ по объёму — см. VOL_SCAN_SYMBOL_SORT)
 VOL_SCAN_ENABLED = True
 VOL_SCAN_INTERVAL_MIN = 30       # как часто крутить сканер
