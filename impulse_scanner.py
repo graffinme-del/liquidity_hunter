@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import html
 import logging
+import os
 import random
 import time
 from typing import Any, Optional
@@ -80,10 +81,8 @@ def _impulse_long_pct_last_closed(closed: list[dict]) -> tuple[float, int]:
     return best_pct, which
 
 
-def _analyze_impulse_15m_price_volume(closed: list[dict]) -> Optional[dict]:
-    """
-    Цена + объём (без taker). Только закрытые свечи; последняя в klines может быть незакрыта — не в closed.
-    """
+def _impulse_price_candidate(closed: list[dict]) -> Optional[dict]:
+    """Только порог по цене (+ MIN_PRICE)."""
     if len(closed) < 3:
         return None
     last = closed[-1]
@@ -91,29 +90,30 @@ def _analyze_impulse_15m_price_volume(closed: list[dict]) -> Optional[dict]:
     if close < getattr(config, "MIN_PRICE", 0.01):
         return None
     pct, k = _impulse_long_pct_last_closed(closed)
-    mn = getattr(config, "IMPULSE_15M_MIN_PCT", 15.0)
+    mn = getattr(config, "IMPULSE_15M_MIN_PCT", 6.0)
     if pct < mn:
         return None
+    return {"pct": round(pct, 2), "candles": k, "close": round(close, 8)}
 
+
+def _apply_volume_ma(closed: list[dict], base: dict) -> bool:
+    """Дополняет base полями объёма; False = не прошёл фильтр объёма."""
+    k = int(base["candles"])
     ma_lb = getattr(config, "IMPULSE_15M_VOL_MA_LOOKBACK", 20)
     use_vol = getattr(config, "IMPULSE_15M_USE_VOLUME_MA", True)
-    vol_ratio: float | None = None
-    vol_mean_imp = 0.0
-    vol_mean_base = 0.0
-    if use_vol:
-        vol_ratio, vol_mean_imp, vol_mean_base = _volume_impulse_vs_ma(closed, k, ma_lb)
-        min_vr = getattr(config, "IMPULSE_15M_VOL_MIN_RATIO", 1.8)
-        if vol_ratio is None or vol_ratio < min_vr:
-            return None
-
-    return {
-        "pct": round(pct, 2),
-        "candles": k,
-        "close": round(close, 8),
-        "vol_ratio": None if vol_ratio is None else round(vol_ratio, 2),
-        "vol_mean_impulse": round(vol_mean_imp, 2),
-        "vol_mean_baseline": round(vol_mean_base, 2),
-    }
+    vol_ratio, vol_mean_imp, vol_mean_base = _volume_impulse_vs_ma(closed, k, ma_lb)
+    if not use_vol:
+        base["vol_ratio"] = round(vol_ratio, 2) if vol_ratio is not None else None
+        base["vol_mean_impulse"] = round(vol_mean_imp, 2)
+        base["vol_mean_baseline"] = round(vol_mean_base, 2)
+        return True
+    min_vr = getattr(config, "IMPULSE_15M_VOL_MIN_RATIO", 1.25)
+    if vol_ratio is None or vol_ratio < min_vr:
+        return False
+    base["vol_ratio"] = round(vol_ratio, 2)
+    base["vol_mean_impulse"] = round(vol_mean_imp, 2)
+    base["vol_mean_baseline"] = round(vol_mean_base, 2)
+    return True
 
 
 async def _taker_buy_sell_ratio(
@@ -122,7 +122,7 @@ async def _taker_buy_sell_ratio(
     """
     Агрегированный buyVol/sellVol за k последних по времени интервалов 15m.
     """
-    limit = max(k, 3)
+    limit = min(30, max(k, 8))
     rows = await client.get_taker_long_short(symbol, "15m", limit=limit)
     if not rows:
         return None
@@ -136,7 +136,7 @@ async def _taker_buy_sell_ratio(
 
 
 def build_impulse_alert_text(hits: list[dict]) -> str:
-    mn = getattr(config, "IMPULSE_15M_MIN_PCT", 15.0)
+    mn = getattr(config, "IMPULSE_15M_MIN_PCT", 6.0)
     use_vol = getattr(config, "IMPULSE_15M_USE_VOLUME_MA", True)
     use_tk = getattr(config, "IMPULSE_15M_USE_TAKER", True)
     if not hits:
@@ -146,9 +146,9 @@ def build_impulse_alert_text(hits: list[dict]) -> str:
         )
     filt = []
     if use_vol:
-        filt.append(f"vol ≥{getattr(config, 'IMPULSE_15M_VOL_MIN_RATIO', 1.8):.1f}× к базе")
+        filt.append(f"vol ≥{getattr(config, 'IMPULSE_15M_VOL_MIN_RATIO', 1.25):.1f}× к базе")
     if use_tk:
-        filt.append(f"taker buy/sell ≥{getattr(config, 'IMPULSE_15M_TAKER_MIN_RATIO', 1.08):.2f}")
+        filt.append(f"taker buy/sell ≥{getattr(config, 'IMPULSE_15M_TAKER_MIN_RATIO', 1.01):.2f}")
     sub = "; ".join(filt) if filt else "только цена"
     lines = [
         f"<b>Импульс 15m (≥{mn:.0f}% за 1–3 свечи)</b>",
@@ -182,6 +182,9 @@ async def scan_impulse_hits(*, respect_dedup: bool = True) -> list[dict]:
     hits: list[dict] = []
     now = time.time()
     dedup_sec = getattr(config, "IMPULSE_15M_DEDUP_MIN", 45) * 60
+    cnt_price = 0
+    cnt_after_vol = 0
+    cnt_taker_fail = 0
 
     async with aiohttp.ClientSession() as session:
         client = BinanceClient(session)
@@ -214,19 +217,32 @@ async def scan_impulse_hits(*, respect_dedup: bool = True) -> list[dict]:
                 if len(candles) < 5:
                     continue
                 closed = candles[:-1] if len(candles) > 1 else candles
-                info = _analyze_impulse_15m_price_volume(closed)
-                if not info:
+                base = _impulse_price_candidate(closed)
+                if not base:
                     continue
+                cnt_price += 1
+                if not _apply_volume_ma(closed, base):
+                    continue
+                cnt_after_vol += 1
+
                 use_taker = getattr(config, "IMPULSE_15M_USE_TAKER", True)
+                ignore_empty = getattr(config, "IMPULSE_15M_TAKER_IGNORE_EMPTY", True)
+                min_tr = getattr(config, "IMPULSE_15M_TAKER_MIN_RATIO", 1.01)
                 if use_taker:
-                    kr = int(info["candles"])
+                    kr = int(base["candles"])
                     taker_r = await _taker_buy_sell_ratio(client, symbol, kr)
-                    min_tr = getattr(config, "IMPULSE_15M_TAKER_MIN_RATIO", 1.08)
-                    if taker_r is None or taker_r < min_tr:
+                    if taker_r is None:
+                        if not ignore_empty:
+                            cnt_taker_fail += 1
+                            continue
+                    elif taker_r < min_tr:
+                        cnt_taker_fail += 1
                         continue
-                    info["taker_ratio"] = round(taker_r, 3)
-                info["symbol"] = symbol
-                hits.append(info)
+                    if taker_r is not None:
+                        base["taker_ratio"] = round(taker_r, 3)
+
+                base["symbol"] = symbol
+                hits.append(base)
                 if respect_dedup:
                     _last_impulse_alert_at[symbol] = now
 
@@ -243,6 +259,14 @@ async def scan_impulse_hits(*, respect_dedup: bool = True) -> list[dict]:
             del _last_impulse_alert_at[k]
 
     hits.sort(key=lambda x: x.get("pct", 0), reverse=True)
+
+    mn = getattr(config, "IMPULSE_15M_MIN_PCT", 6.0)
+    if os.getenv("IMPULSE_15M_QUIET_DIAG", "").strip() not in ("1", "true", "yes"):
+        print(
+            f"[IMPULSE] диагностика: цена≥{mn}%: {cnt_price}, после объёма: {cnt_after_vol}, "
+            f"отсев taker: {cnt_taker_fail}, в алерт: {len(hits)}",
+            flush=True,
+        )
     return hits
 
 
