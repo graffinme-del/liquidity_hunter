@@ -117,13 +117,13 @@ def _apply_volume_ma(closed: list[dict], base: dict) -> bool:
 
 
 async def _taker_buy_sell_ratio(
-    client: BinanceClient, symbol: str, k: int,
+    client: BinanceClient, symbol: str, k: int, *, period: str = "15m",
 ) -> float | None:
     """
-    Агрегированный buyVol/sellVol за k последних по времени интервалов 15m.
+    Агрегированный buyVol/sellVol за k последних по времени интервалов (period: 5m, 15m, ...).
     """
     limit = min(30, max(k, 8))
-    rows = await client.get_taker_long_short(symbol, "15m", limit=limit)
+    rows = await client.get_taker_long_short(symbol, period, limit=limit)
     if not rows:
         return None
     rows_sorted = sorted(rows, key=lambda r: int(r.get("timestamp", 0)), reverse=True)

@@ -71,20 +71,24 @@ PUMP_EMA_DETACH_PCT_MIN = 20.0   # минимум % выше EMA20 1h
 PUMP_EMA_DETACH_PCT_MAX = 35.0   # максимум (сильнее = уже параболика)
 PUMP_CHECK_INTERVAL_MIN = 60     # проверка раз в час
 
-# Старт пампа 15m — тихий фон + одна зелёная свеча с всплеском объёма (раньше «догонялок»)
+# Старт пампа: 5m раньше 15m; незакрытая свеча — ещё раньше (больше ложных)
 EARLY_PUMP_ENABLED = True
-EARLY_PUMP_INTERVAL_MIN = 10
+EARLY_PUMP_TIMEFRAME = "5m"          # 5m | 15m — интервал свечи для «старта»
+EARLY_PUMP_INTERVAL_MIN = 3          # как часто опрашивать (реже — меньше нагрузка)
 EARLY_PUMP_MAX_SYMBOLS = 200
 EARLY_PUMP_MIN_QUOTE_VOL_24H = 25_000.0
 EARLY_PUMP_SYMBOL_SORT = "abs_change_24h"
 EARLY_PUMP_SHUFFLE = False
-EARLY_PUMP_DEDUP_MIN = 30
-EARLY_PUMP_QUIET_LOOKBACK = 16       # свечей 15m до импульса — оценка «тишины»
-EARLY_PUMP_QUIET_RANGE_MAX = 2.2     # медиана (high-low)/close % в тихом окне
-EARLY_PUMP_BODY_MIN_PCT = 1.0
-EARLY_PUMP_BODY_MAX_PCT = 7.0        # выше — считаем уже разгон, не «старт»
-EARLY_PUMP_VOL_MEDIAN_LOOKBACK = 16
-EARLY_PUMP_VOL_SPIKE_MULT = 2.2      # объём последней свечи / медиана объёма до неё
+EARLY_PUMP_DEDUP_MIN = 20
+EARLY_PUMP_QUIET_MINUTES = 240       # сколько минут истории оцениваем как «тихий фон»
+EARLY_PUMP_VOL_MEDIAN_MINUTES = 240  # база для медианы объёма (те же минуты)
+EARLY_PUMP_QUIET_RANGE_MAX = 0.85    # медиана (high-low)/close % по барам тишины (5m — узкие бары)
+EARLY_PUMP_BODY_MIN_PCT = 0.35
+EARLY_PUMP_BODY_MAX_PCT = 3.0        # выше — уже разгон по одной свече TF
+EARLY_PUMP_VOL_SPIKE_MULT = 2.0
+EARLY_PUMP_USE_FORMING_CANDLE = True   # сигнал по текущей незакрытой свече (раньше)
+EARLY_PUMP_FALLBACK_CLOSED = True      # если формирующая не прошла — последняя закрытая
+EARLY_PUMP_FORMING_VOL_RELAX = 0.55    # доля порога vol при неполной свече (× spike)
 EARLY_PUMP_USE_TAKER = True
 EARLY_PUMP_TAKER_MIN_RATIO = 1.02
 EARLY_PUMP_TAKER_IGNORE_EMPTY = True

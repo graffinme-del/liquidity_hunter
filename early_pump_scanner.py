@@ -1,6 +1,7 @@
 """
-Старт пампа на 15m: перед импульсом — «тихий» участок, на последней закрытой свече —
-умеренный рост + всплеск объёма к медиане. Это раньше, чем скринер по EMA20 1h.
+Старт пампа: тихий фон, затем первая зелёная свеча с всплеском объёма.
+По умолчанию TF=5m (раньше, чем 15m: сигнал после закрытия свечи ~5 мин, не ~15).
+Опционально — текущая незакрытая свеча (ещё раньше, больше шума).
 """
 from __future__ import annotations
 
@@ -22,6 +23,17 @@ from telegram_notify import ephemeral_delete_seconds, send_telegram
 log = logging.getLogger(__name__)
 
 _last_early_pump_at: dict[str, float] = {}
+
+
+def _tf_minutes(tf: str) -> int:
+    m = {
+        "1m": 1, "3m": 3, "5m": 5, "15m": 15, "30m": 30, "1h": 60,
+    }.get(tf.strip().lower(), 5)
+    return max(1, m)
+
+
+def _bars_for_minutes(minutes: int, tf: str) -> int:
+    return max(8, int(minutes / _tf_minutes(tf)))
 
 
 def _to_float(x: Any, default: float = 0.0) -> float:
@@ -56,70 +68,108 @@ def _body_pct_long(bar: dict) -> float | None:
     return (c - o) / o * 100.0
 
 
-def _quiet_and_spike(closed: list[dict]) -> Optional[dict]:
-    """
-    Последняя свеча — кандидат на «старт»; до неё — тихое окно.
-    """
-    quiet_n = int(getattr(config, "EARLY_PUMP_QUIET_LOOKBACK", 16))
-    need = quiet_n + 3
-    if len(closed) < need:
-        return None
+def _elapsed_bar_fraction(bar: dict, tf_min: int) -> float:
+    """Доля прошедшего времени внутри текущей свечи (для незакрытой)."""
+    ot = int(bar.get("open_time") or 0)
+    if ot <= 0:
+        return 0.5
+    elapsed = time.time() - (ot / 1000.0)
+    total = float(tf_min * 60)
+    return min(0.98, max(0.06, elapsed / total))
 
-    quiet_bars = closed[-(quiet_n + 1) : -1]
+
+def _quiet_and_spike(
+    candles: list[dict],
+    *,
+    tf: str,
+    forming: bool,
+) -> Optional[dict]:
+    """
+    forming=False: сигнал — последняя закрытая свеча (candles[:-1]).
+    forming=True: сигнал — последняя (текущая) свеча, тишина — только закрытые до неё.
+    """
+    tfm = _tf_minutes(tf)
+    quiet_min = int(getattr(config, "EARLY_PUMP_QUIET_MINUTES", 240))
+    vol_med_min = int(getattr(config, "EARLY_PUMP_VOL_MEDIAN_MINUTES", 240))
+    quiet_n = _bars_for_minutes(quiet_min, tf)
+    vol_lb = _bars_for_minutes(vol_med_min, tf)
+
+    if forming:
+        if len(candles) < quiet_n + vol_lb + 4:
+            return None
+        quiet_bars = candles[-(quiet_n + 1) : -1]
+        last = candles[-1]
+        hist_slice = candles[-(vol_lb + 1) : -1]
+    else:
+        closed = candles[:-1] if len(candles) > 1 else candles
+        if len(closed) < quiet_n + vol_lb + 3:
+            return None
+        quiet_bars = closed[-(quiet_n + 1) : -1]
+        last = closed[-1]
+        hist_slice = closed[-(vol_lb + 1) : -1]
+
     if len(quiet_bars) < quiet_n:
         return None
 
     range_med = _median([_bar_range_pct(b) for b in quiet_bars])
-    max_quiet = float(getattr(config, "EARLY_PUMP_QUIET_RANGE_MAX", 2.2))
+    max_quiet = float(getattr(config, "EARLY_PUMP_QUIET_RANGE_MAX", 0.85))
     if range_med > max_quiet:
         return None
 
-    last = closed[-1]
     body = _body_pct_long(last)
     if body is None:
         return None
-    bmin = float(getattr(config, "EARLY_PUMP_BODY_MIN_PCT", 1.0))
-    bmax = float(getattr(config, "EARLY_PUMP_BODY_MAX_PCT", 7.0))
+    bmin = float(getattr(config, "EARLY_PUMP_BODY_MIN_PCT", 0.35))
+    bmax = float(getattr(config, "EARLY_PUMP_BODY_MAX_PCT", 3.0))
     if body < bmin or body > bmax:
         return None
 
-    vol_lb = int(getattr(config, "EARLY_PUMP_VOL_MEDIAN_LOOKBACK", 16))
-    vol_hist = [_to_float(b.get("volume")) for b in closed[-(vol_lb + 1) : -1]]
+    vol_hist = [_to_float(b.get("volume")) for b in hist_slice]
     med_v = _median(vol_hist)
     if med_v <= 1e-12:
         return None
     v_last = _to_float(last.get("volume"))
-    spike = float(getattr(config, "EARLY_PUMP_VOL_SPIKE_MULT", 2.2))
+    spike = float(getattr(config, "EARLY_PUMP_VOL_SPIKE_MULT", 2.0))
     vol_ratio = v_last / med_v
-    if vol_ratio < spike:
+    need = spike
+    if forming:
+        frac = _elapsed_bar_fraction(last, tfm)
+        relax = float(getattr(config, "EARLY_PUMP_FORMING_VOL_RELAX", 0.55))
+        need = spike * max(relax, frac)
+    if vol_ratio < need:
         return None
 
     close = _to_float(last.get("close"))
     if close < getattr(config, "MIN_PRICE", 0.01):
         return None
 
-    return {
+    out = {
         "pct": round(body, 2),
         "vol_ratio": round(vol_ratio, 2),
         "quiet_range_med": round(range_med, 3),
         "close": round(close, 8),
+        "tf": tf,
+        "forming": forming,
     }
+    return out
 
 
 def build_early_pump_alert_text(hits: list[dict]) -> str:
-    bmin = float(getattr(config, "EARLY_PUMP_BODY_MIN_PCT", 1.0))
-    bmax = float(getattr(config, "EARLY_PUMP_BODY_MAX_PCT", 7.0))
-    sp = float(getattr(config, "EARLY_PUMP_VOL_SPIKE_MULT", 2.2))
-    qr = float(getattr(config, "EARLY_PUMP_QUIET_RANGE_MAX", 2.2))
+    tf = getattr(config, "EARLY_PUMP_TIMEFRAME", "5m")
+    bmin = float(getattr(config, "EARLY_PUMP_BODY_MIN_PCT", 0.35))
+    bmax = float(getattr(config, "EARLY_PUMP_BODY_MAX_PCT", 3.0))
+    sp = float(getattr(config, "EARLY_PUMP_VOL_SPIKE_MULT", 2.0))
+    qr = float(getattr(config, "EARLY_PUMP_QUIET_RANGE_MAX", 0.85))
+    qm = int(getattr(config, "EARLY_PUMP_QUIET_MINUTES", 240))
     if not hits:
         return (
-            f"<b>Старт пампа 15m</b>\n"
-            f"<i>Нет пар: тишина ≤{qr}% + тело {bmin:.0f}–{bmax:.0f}% + vol ≥{sp:.1f}× медианы.</i>"
+            f"<b>Старт пампа ({tf})</b>\n"
+            f"<i>Нет пар: тишина ~{qm} мин ≤{qr}% + тело {bmin:.1f}–{bmax:.1f}% + vol ≥{sp:.1f}×.</i>"
         )
     lines = [
-        "<b>Старт пампа 15m</b>",
-        f"Тихий фон (медиана диапазона ≤{qr}%), затем зелёная свеча "
-        f"{bmin:.0f}–{bmax:.0f}% и объём ≥{sp:.1f}× к медиане объёма до неё.",
+        f"<b>Старт пампа ({tf})</b>",
+        f"Тихий фон (~{qm} мин, медиана диапазона ≤{qr}%), затем зелёная свеча "
+        f"{bmin:.1f}–{bmax:.1f}% и всплеск объёма к медиане.",
         "",
     ]
     for h in hits[:25]:
@@ -129,6 +179,8 @@ def build_early_pump_alert_text(hits: list[dict]) -> str:
         qm = h.get("quiet_range_med")
         tr = h.get("taker_ratio")
         extra = [f"vol×{vr}", f"тишина {qm}%"]
+        if h.get("forming"):
+            extra.append("текущая свеча")
         if tr is not None:
             extra.append(f"taker {tr:.2f}")
         lines.append(f"  <b>{sym}</b> +{pct}% ({', '.join(extra)})")
@@ -175,11 +227,17 @@ async def scan_early_pump_hits(*, respect_dedup: bool = True) -> list[dict]:
                         await asyncio.sleep(pause)
                     continue
 
-                candles = await client.get_klines(symbol, "15m", 100)
-                if len(candles) < 5:
+                tf = getattr(config, "EARLY_PUMP_TIMEFRAME", "5m")
+                candles = await client.get_klines(symbol, tf, 150)
+                if len(candles) < 10:
                     continue
-                closed = candles[:-1] if len(candles) > 1 else candles
-                base = _quiet_and_spike(closed)
+                use_forming = getattr(config, "EARLY_PUMP_USE_FORMING_CANDLE", True)
+                fallback = getattr(config, "EARLY_PUMP_FALLBACK_CLOSED", True)
+                base = None
+                if use_forming:
+                    base = _quiet_and_spike(candles, tf=tf, forming=True)
+                if base is None and fallback:
+                    base = _quiet_and_spike(candles, tf=tf, forming=False)
                 if not base:
                     continue
                 cnt_pre += 1
@@ -188,7 +246,7 @@ async def scan_early_pump_hits(*, respect_dedup: bool = True) -> list[dict]:
                 ignore_empty = getattr(config, "EARLY_PUMP_TAKER_IGNORE_EMPTY", True)
                 min_tr = float(getattr(config, "EARLY_PUMP_TAKER_MIN_RATIO", 1.02))
                 if use_taker:
-                    taker_r = await _taker_buy_sell_ratio(client, symbol, 1)
+                    taker_r = await _taker_buy_sell_ratio(client, symbol, 1, period=tf)
                     if taker_r is None:
                         if not ignore_empty:
                             continue
