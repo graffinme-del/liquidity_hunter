@@ -29,6 +29,9 @@ async def run_screener(send_tg: bool = False) -> tuple[list[dict], bool]:
     from dotenv import load_dotenv
     load_dotenv()
 
+    if not getattr(config, "PUMP_EMA_SCREEN_ENABLED", True):
+        return [], True
+
     pumped: list[dict] = []
 
     async with aiohttp.ClientSession() as session:

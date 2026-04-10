@@ -2,13 +2,14 @@
 """
 Liquidity Hunter v1 — точка входа.
 Запуск: python main.py
-Сканер + планировщик + импульсы 15m + пампы 1h + VOL + команды TG.
+Сканер + старт пампа 15m + опц. импульс 1–3 свечи + опц. EMA-памп 1h + VOL + TG.
 """
 import asyncio
 import logging
 from datetime import datetime, timezone, timedelta
 
 import config
+from early_pump_scanner import run_early_pump_scan
 from impulse_scanner import run_impulse_scan
 from movement_scanner import run_movement_scan
 from pump_screener import run_screener
@@ -28,8 +29,34 @@ def _is_trading_hours() -> bool:
     return config.TRADING_START_HOUR <= hour < config.TRADING_END_HOUR
 
 
+async def run_early_pump_loop():
+    """Старт пампа: тишина + первая свеча с объёмом (15m)."""
+    if not getattr(config, "EARLY_PUMP_ENABLED", False):
+        return
+    await asyncio.sleep(90)
+    interval_sec = getattr(config, "EARLY_PUMP_INTERVAL_MIN", 10) * 60
+    while True:
+        if _is_trading_hours():
+            try:
+                hits, tg_ok = await run_early_pump_scan(send_tg=True)
+                if hits:
+                    if tg_ok:
+                        print(
+                            f"[EARLY] Старт пампа 15m: {len(hits)} пар, отправлено в TG",
+                            flush=True,
+                        )
+                    else:
+                        print(
+                            "[EARLY] Старт пампа: отправка в TG не удалась — см. [TG] в journalctl",
+                            flush=True,
+                        )
+            except Exception as e:
+                print(f"[EARLY] Ошибка: {e}")
+        await asyncio.sleep(interval_sec)
+
+
 async def run_pump_loop():
-    """Раз в час проверяет пампы и шлёт в TG."""
+    """Раз в час: поздний «памп» по EMA20 1h (если PUMP_EMA_SCREEN_ENABLED)."""
     interval_sec = config.PUMP_CHECK_INTERVAL_MIN * 60
     await asyncio.sleep(120)  # первая проверка через 2 мин после старта
     while True:
@@ -106,6 +133,7 @@ async def main():
     await asyncio.gather(
         run_scanner(),
         run_scheduler(),
+        run_early_pump_loop(),
         run_impulse_loop(),
         run_pump_loop(),
         run_movement_loop(),

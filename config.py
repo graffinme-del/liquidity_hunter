@@ -65,14 +65,32 @@ SCAN_SYMBOL_PAUSE_SEC = 0.12  # пауза между парами, разгру
 TRADING_START_HOUR = 9   # с 9:00
 TRADING_END_HOUR = 21    # до 21:00
 
-# Pump screener — встроен в бота, шлёт в TG
+# Pump screener — отрыв от EMA20 на 1h (поздняя стадия). Для «старта» см. EARLY_PUMP_*.
+PUMP_EMA_SCREEN_ENABLED = False  # True — раз в час список «уже оторвались от EMA»
 PUMP_EMA_DETACH_PCT_MIN = 20.0   # минимум % выше EMA20 1h
 PUMP_EMA_DETACH_PCT_MAX = 35.0   # максимум (сильнее = уже параболика)
 PUMP_CHECK_INTERVAL_MIN = 60     # проверка раз в час
 
-# Импульс 15m — быстрый отрыв вверх за 1–3 закрытые свечи (раньше, чем памп по EMA 1h)
-# Порог 15% за 1–3 свечи на ликвидных парах почти не встречается — для «старта» смотрите 4–8%.
-IMPULSE_15M_ENABLED = True
+# Старт пампа 15m — тихий фон + одна зелёная свеча с всплеском объёма (раньше «догонялок»)
+EARLY_PUMP_ENABLED = True
+EARLY_PUMP_INTERVAL_MIN = 10
+EARLY_PUMP_MAX_SYMBOLS = 200
+EARLY_PUMP_MIN_QUOTE_VOL_24H = 25_000.0
+EARLY_PUMP_SYMBOL_SORT = "abs_change_24h"
+EARLY_PUMP_SHUFFLE = False
+EARLY_PUMP_DEDUP_MIN = 30
+EARLY_PUMP_QUIET_LOOKBACK = 16       # свечей 15m до импульса — оценка «тишины»
+EARLY_PUMP_QUIET_RANGE_MAX = 2.2     # медиана (high-low)/close % в тихом окне
+EARLY_PUMP_BODY_MIN_PCT = 1.0
+EARLY_PUMP_BODY_MAX_PCT = 7.0        # выше — считаем уже разгон, не «старт»
+EARLY_PUMP_VOL_MEDIAN_LOOKBACK = 16
+EARLY_PUMP_VOL_SPIKE_MULT = 2.2      # объём последней свечи / медиана объёма до неё
+EARLY_PUMP_USE_TAKER = True
+EARLY_PUMP_TAKER_MIN_RATIO = 1.02
+EARLY_PUMP_TAKER_IGNORE_EMPTY = True
+
+# Импульс 15m — сильный рост за 1–3 свечи (догон может совпадать с поздним этапом)
+IMPULSE_15M_ENABLED = False
 IMPULSE_15M_MIN_PCT = 6.0        # минимум % роста (от open окна до close последней свечи)
 IMPULSE_15M_INTERVAL_MIN = 15    # как часто крутить сканер
 IMPULSE_15M_MAX_SYMBOLS = 200
