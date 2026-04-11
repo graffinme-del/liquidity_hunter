@@ -80,9 +80,11 @@ EARLY_PUMP_MIN_QUOTE_VOL_24H = 25_000.0
 EARLY_PUMP_SYMBOL_SORT = "abs_change_24h"
 EARLY_PUMP_SHUFFLE = False
 EARLY_PUMP_DEDUP_MIN = 20
-EARLY_PUMP_QUIET_MINUTES = 240       # сколько минут истории оцениваем как «тихий фон»
-EARLY_PUMP_VOL_MEDIAN_MINUTES = 240  # база для медианы объёма (те же минуты)
-EARLY_PUMP_QUIET_RANGE_MAX = 0.85    # медиана (high-low)/close % по барам тишины (5m — узкие бары)
+# Тишина перед свечой: False — не требовать узкий фон (только тело + vol + taker и т.д.)
+EARLY_PUMP_REQUIRE_QUIET = False
+EARLY_PUMP_QUIET_MINUTES = 240       # если REQUIRE_QUIET: сколько минут смотреть «тишину»
+EARLY_PUMP_VOL_MEDIAN_MINUTES = 240  # база для медианы объёма до сигнальной свечи
+EARLY_PUMP_QUIET_RANGE_MAX = 0.85    # если REQUIRE_QUIET: медиана (high-low)/close % в окне
 EARLY_PUMP_BODY_MIN_PCT = 0.35
 EARLY_PUMP_BODY_MAX_PCT = 3.0        # выше — уже разгон по одной свече TF
 EARLY_PUMP_VOL_SPIKE_MULT = 2.0
@@ -92,6 +94,14 @@ EARLY_PUMP_FORMING_VOL_RELAX = 0.55    # доля порога vol при неп
 EARLY_PUMP_USE_TAKER = True
 EARLY_PUMP_TAKER_MIN_RATIO = 1.02
 EARLY_PUMP_TAKER_IGNORE_EMPTY = True
+# Надёжность: альт должен сильнее расти, чем BTC на той же свече (меньше ложных при общем пампе рынка)
+EARLY_PUMP_USE_BTC_FILTER = False
+EARLY_PUMP_MIN_OUTPERFORM_BTC_PCT = 0.25  # тело альта − тело BTCUSDT на последней свече TF, %
+# OI: рост открытого интереса за последние бакеты hist (подтверждение притока в позиции)
+EARLY_PUMP_USE_OI_FILTER = False
+EARLY_PUMP_OI_MIN_CHANGE_PCT = 0.12      # (последний OI − первый в окне) / первый × 100
+EARLY_PUMP_OI_HIST_LIMIT = 8            # точек в openInterestHist
+EARLY_PUMP_OI_IGNORE_EMPTY = True       # нет hist — не отбрасывать пару
 
 # Импульс 15m — сильный рост за 1–3 свечи (догон может совпадать с поздним этапом)
 IMPULSE_15M_ENABLED = False

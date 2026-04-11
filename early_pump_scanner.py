@@ -86,35 +86,49 @@ def _quiet_and_spike(
 ) -> Optional[dict]:
     """
     forming=False: сигнал — последняя закрытая свеча (candles[:-1]).
-    forming=True: сигнал — последняя (текущая) свеча, тишина — только закрытые до неё.
+    forming=True: сигнал — последняя (текущая) свеча.
+    Если EARLY_PUMP_REQUIRE_QUIET — до свечи должно быть «узкое» окно по диапазону баров.
     """
     tfm = _tf_minutes(tf)
-    quiet_min = int(getattr(config, "EARLY_PUMP_QUIET_MINUTES", 240))
     vol_med_min = int(getattr(config, "EARLY_PUMP_VOL_MEDIAN_MINUTES", 240))
-    quiet_n = _bars_for_minutes(quiet_min, tf)
     vol_lb = _bars_for_minutes(vol_med_min, tf)
+    require_quiet = getattr(config, "EARLY_PUMP_REQUIRE_QUIET", False)
 
-    if forming:
-        if len(candles) < quiet_n + vol_lb + 4:
+    if require_quiet:
+        quiet_min = int(getattr(config, "EARLY_PUMP_QUIET_MINUTES", 240))
+        quiet_n = _bars_for_minutes(quiet_min, tf)
+        if forming:
+            if len(candles) < quiet_n + vol_lb + 4:
+                return None
+            quiet_bars = candles[-(quiet_n + 1) : -1]
+            last = candles[-1]
+            hist_slice = candles[-(vol_lb + 1) : -1]
+        else:
+            closed = candles[:-1] if len(candles) > 1 else candles
+            if len(closed) < quiet_n + vol_lb + 3:
+                return None
+            quiet_bars = closed[-(quiet_n + 1) : -1]
+            last = closed[-1]
+            hist_slice = closed[-(vol_lb + 1) : -1]
+        if len(quiet_bars) < quiet_n:
             return None
-        quiet_bars = candles[-(quiet_n + 1) : -1]
-        last = candles[-1]
-        hist_slice = candles[-(vol_lb + 1) : -1]
+        range_med = _median([_bar_range_pct(b) for b in quiet_bars])
+        max_quiet = float(getattr(config, "EARLY_PUMP_QUIET_RANGE_MAX", 0.85))
+        if range_med > max_quiet:
+            return None
     else:
-        closed = candles[:-1] if len(candles) > 1 else candles
-        if len(closed) < quiet_n + vol_lb + 3:
-            return None
-        quiet_bars = closed[-(quiet_n + 1) : -1]
-        last = closed[-1]
-        hist_slice = closed[-(vol_lb + 1) : -1]
-
-    if len(quiet_bars) < quiet_n:
-        return None
-
-    range_med = _median([_bar_range_pct(b) for b in quiet_bars])
-    max_quiet = float(getattr(config, "EARLY_PUMP_QUIET_RANGE_MAX", 0.85))
-    if range_med > max_quiet:
-        return None
+        if forming:
+            if len(candles) < vol_lb + 4:
+                return None
+            last = candles[-1]
+            hist_slice = candles[-(vol_lb + 1) : -1]
+        else:
+            closed = candles[:-1] if len(candles) > 1 else candles
+            if len(closed) < vol_lb + 2:
+                return None
+            last = closed[-1]
+            hist_slice = closed[-(vol_lb + 1) : -1]
+        range_med = _median([_bar_range_pct(b) for b in hist_slice]) if hist_slice else 0.0
 
     body = _body_pct_long(last)
     if body is None:
@@ -150,8 +164,23 @@ def _quiet_and_spike(
         "close": round(close, 8),
         "tf": tf,
         "forming": forming,
+        "require_quiet": require_quiet,
     }
     return out
+
+
+async def _oi_window_change_pct(client: BinanceClient, symbol: str, period: str) -> float | None:
+    """Изменение OI от первой до последней точки в окне hist (period совпадает с TF)."""
+    limit = int(getattr(config, "EARLY_PUMP_OI_HIST_LIMIT", 8))
+    rows = await client.get_open_interest_hist(symbol, period=period, limit=limit)
+    if len(rows) < 2:
+        return None
+    rows = sorted(rows, key=lambda r: int(r.get("timestamp", 0)))
+    o0 = _to_float(rows[0].get("open_interest"))
+    o1 = _to_float(rows[-1].get("open_interest"))
+    if o0 <= 1e-12:
+        return None
+    return (o1 - o0) / o0 * 100.0
 
 
 def build_early_pump_alert_text(hits: list[dict]) -> str:
@@ -161,28 +190,52 @@ def build_early_pump_alert_text(hits: list[dict]) -> str:
     sp = float(getattr(config, "EARLY_PUMP_VOL_SPIKE_MULT", 2.0))
     qr = float(getattr(config, "EARLY_PUMP_QUIET_RANGE_MAX", 0.85))
     qm = int(getattr(config, "EARLY_PUMP_QUIET_MINUTES", 240))
+    req_q = getattr(config, "EARLY_PUMP_REQUIRE_QUIET", False)
     if not hits:
+        if req_q:
+            sub = f"тишина ~{qm} мин ≤{qr}% + "
+        else:
+            sub = ""
         return (
             f"<b>Старт пампа ({tf})</b>\n"
-            f"<i>Нет пар: тишина ~{qm} мин ≤{qr}% + тело {bmin:.1f}–{bmax:.1f}% + vol ≥{sp:.1f}×.</i>"
+            f"<i>Нет пар: {sub}тело {bmin:.1f}–{bmax:.1f}% + vol ≥{sp:.1f}× к медиане.</i>"
+        )
+    if req_q:
+        head2 = (
+            f"Тихий фон (~{qm} мин, медиана диапазона ≤{qr}%), затем зелёная свеча "
+            f"{bmin:.1f}–{bmax:.1f}% и всплеск объёма к медиане."
+        )
+    else:
+        head2 = (
+            f"Без фильтра «тишины»: зелёная свеча {bmin:.1f}–{bmax:.1f}% "
+            f"и объём ≥{sp:.1f}× к медиане объёма до неё."
         )
     lines = [
         f"<b>Старт пампа ({tf})</b>",
-        f"Тихий фон (~{qm} мин, медиана диапазона ≤{qr}%), затем зелёная свеча "
-        f"{bmin:.1f}–{bmax:.1f}% и всплеск объёма к медиане.",
+        head2,
         "",
     ]
     for h in hits[:25]:
         sym = html.escape(str(h.get("symbol", "?")))
         pct = h.get("pct", 0)
         vr = h.get("vol_ratio")
-        qm = h.get("quiet_range_med")
+        qmed = h.get("quiet_range_med")
         tr = h.get("taker_ratio")
-        extra = [f"vol×{vr}", f"тишина {qm}%"]
+        extra = [f"vol×{vr}"]
+        if h.get("require_quiet", req_q):
+            extra.append(f"тишина {qmed}%")
+        else:
+            extra.append(f"мед.диап.фона {qmed}%")
         if h.get("forming"):
             extra.append("текущая свеча")
         if tr is not None:
             extra.append(f"taker {tr:.2f}")
+        vb = h.get("vs_btc")
+        if vb is not None:
+            extra.append(f"vs BTC +{vb}%")
+        oi = h.get("oi_change_pct")
+        if oi is not None:
+            extra.append(f"OI {oi:+.2f}%")
         lines.append(f"  <b>{sym}</b> +{pct}% ({', '.join(extra)})")
     if len(hits) > 25:
         lines.append(f"... и ещё {len(hits) - 25}")
@@ -199,9 +252,20 @@ async def scan_early_pump_hits(*, respect_dedup: bool = True) -> list[dict]:
     dedup_sec = getattr(config, "EARLY_PUMP_DEDUP_MIN", 30) * 60
     cnt_pre = 0
     cnt_after_taker = 0
+    cnt_after_btc = 0
+    cnt_after_oi = 0
 
     async with aiohttp.ClientSession() as session:
         client = BinanceClient(session)
+        tf = getattr(config, "EARLY_PUMP_TIMEFRAME", "5m")
+        use_btc = getattr(config, "EARLY_PUMP_USE_BTC_FILTER", False)
+        btc_ref_body: float | None = None
+        if use_btc:
+            btc_klines = await client.get_klines("BTCUSDT", tf, 20)
+            if btc_klines:
+                bb = _body_pct_long(btc_klines[-1])
+                btc_ref_body = None if bb is None else float(bb)
+
         max_sym = getattr(config, "EARLY_PUMP_MAX_SYMBOLS", 200)
         min_qv = getattr(config, "EARLY_PUMP_MIN_QUOTE_VOL_24H", 25_000.0)
         sort_by = getattr(config, "EARLY_PUMP_SYMBOL_SORT", "abs_change_24h")
@@ -227,7 +291,6 @@ async def scan_early_pump_hits(*, respect_dedup: bool = True) -> list[dict]:
                         await asyncio.sleep(pause)
                     continue
 
-                tf = getattr(config, "EARLY_PUMP_TIMEFRAME", "5m")
                 candles = await client.get_klines(symbol, tf, 150)
                 if len(candles) < 10:
                     continue
@@ -256,6 +319,27 @@ async def scan_early_pump_hits(*, respect_dedup: bool = True) -> list[dict]:
                         base["taker_ratio"] = round(taker_r, 3)
                 cnt_after_taker += 1
 
+                if use_btc and symbol != "BTCUSDT" and btc_ref_body is not None:
+                    min_out = float(getattr(config, "EARLY_PUMP_MIN_OUTPERFORM_BTC_PCT", 0.25))
+                    if base["pct"] - btc_ref_body < min_out:
+                        continue
+                    base["vs_btc"] = round(base["pct"] - btc_ref_body, 2)
+                cnt_after_btc += 1
+
+                use_oi = getattr(config, "EARLY_PUMP_USE_OI_FILTER", False)
+                if use_oi:
+                    oi_ch = await _oi_window_change_pct(client, symbol, tf)
+                    min_oi = float(getattr(config, "EARLY_PUMP_OI_MIN_CHANGE_PCT", 0.12))
+                    ign = getattr(config, "EARLY_PUMP_OI_IGNORE_EMPTY", True)
+                    if oi_ch is None:
+                        if not ign:
+                            continue
+                    elif oi_ch < min_oi:
+                        continue
+                    if oi_ch is not None:
+                        base["oi_change_pct"] = round(oi_ch, 3)
+                cnt_after_oi += 1
+
                 base["symbol"] = symbol
                 hits.append(base)
                 if respect_dedup:
@@ -277,8 +361,8 @@ async def scan_early_pump_hits(*, respect_dedup: bool = True) -> list[dict]:
 
     if os.getenv("EARLY_PUMP_QUIET_DIAG", "").strip() not in ("1", "true", "yes"):
         print(
-            f"[EARLY] диагностика: прошли тишина+тело+vol: {cnt_pre}, после taker: {cnt_after_taker}, "
-            f"в алерт: {len(hits)}",
+            f"[EARLY] диагностика: тишина+vol: {cnt_pre}, после taker: {cnt_after_taker}, "
+            f"после vs BTC: {cnt_after_btc}, после OI: {cnt_after_oi}, в алерт: {len(hits)}",
             flush=True,
         )
     return hits
