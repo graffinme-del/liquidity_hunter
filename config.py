@@ -80,7 +80,7 @@ EARLY_PUMP_MIN_QUOTE_VOL_24H = 25_000.0
 EARLY_PUMP_SYMBOL_SORT = "abs_change_24h"
 EARLY_PUMP_SHUFFLE = False
 EARLY_PUMP_DEDUP_MIN = 20
-# Тишина перед свечой: False — не требовать узкий фон (только тело + vol + taker и т.д.)
+# «Тишина» — узкие бары перед импульсом (сужает выборку). False = не требовать.
 EARLY_PUMP_REQUIRE_QUIET = False
 EARLY_PUMP_QUIET_MINUTES = 240       # если REQUIRE_QUIET: сколько минут смотреть «тишину»
 EARLY_PUMP_VOL_MEDIAN_MINUTES = 240  # база для медианы объёма до сигнальной свечи
@@ -94,14 +94,24 @@ EARLY_PUMP_FORMING_VOL_RELAX = 0.55    # доля порога vol при неп
 EARLY_PUMP_USE_TAKER = True
 EARLY_PUMP_TAKER_MIN_RATIO = 1.02
 EARLY_PUMP_TAKER_IGNORE_EMPTY = True
-# Надёжность: альт должен сильнее расти, чем BTC на той же свече (меньше ложных при общем пампе рынка)
-EARLY_PUMP_USE_BTC_FILTER = False
+# Сравнение с BTCUSDT (альт сильнее BTC на той же свече) — выключено
+EARLY_PUMP_USE_BTC_FILTER = False  # True — включить фильтр
 EARLY_PUMP_MIN_OUTPERFORM_BTC_PCT = 0.25  # тело альта − тело BTCUSDT на последней свече TF, %
-# OI: рост открытого интереса за последние бакеты hist (подтверждение притока в позиции)
-EARLY_PUMP_USE_OI_FILTER = False
-EARLY_PUMP_OI_MIN_CHANGE_PCT = 0.12      # (последний OI − первый в окне) / первый × 100
-EARLY_PUMP_OI_HIST_LIMIT = 8            # точек в openInterestHist
-EARLY_PUMP_OI_IGNORE_EMPTY = True       # нет hist — не отбрасывать пару
+# Цена недалеко от EMA (тот же TF): лонг, но не «уже улетели» от средней
+EARLY_PUMP_USE_EMA_FILTER = True
+EARLY_PUMP_EMA_PERIOD = 20
+EARLY_PUMP_MAX_ABOVE_EMA_PCT = 4.0       # (close−EMA)/EMA×100 ≤ этого; <0 отсекаем
+EARLY_PUMP_EMA_IGNORE_EMPTY = True
+# CVD (прокси): сумма (taker buy − taker sell) по последним барам из klines
+EARLY_PUMP_USE_CVD_FILTER = True
+EARLY_PUMP_CVD_BARS = 12
+EARLY_PUMP_CVD_MIN_SUM = 0.0
+EARLY_PUMP_CVD_IGNORE_EMPTY = True
+# OI: рост в окне openInterestHist (period = TF)
+EARLY_PUMP_USE_OI_FILTER = True
+EARLY_PUMP_OI_MIN_CHANGE_PCT = 0.12
+EARLY_PUMP_OI_HIST_LIMIT = 8
+EARLY_PUMP_OI_IGNORE_EMPTY = True
 
 # Импульс 15m — сильный рост за 1–3 свечи (догон может совпадать с поздним этапом)
 IMPULSE_15M_ENABLED = False

@@ -18,6 +18,7 @@ import aiohttp
 import config
 from data.binance_client import BinanceClient
 from impulse_scanner import _taker_buy_sell_ratio
+from structure import ema
 from telegram_notify import ephemeral_delete_seconds, send_telegram
 
 log = logging.getLogger(__name__)
@@ -169,6 +170,38 @@ def _quiet_and_spike(
     return out
 
 
+def _ema_detach_above_pct(candles: list[dict], period: int) -> tuple[float | None, float | None]:
+    """На последней свече: (close−EMA)/EMA×100; None если мало данных."""
+    closes = [_to_float(c.get("close")) for c in candles]
+    if len(closes) < period + 1:
+        return None, None
+    ev = ema(closes, period)
+    if ev is None or ev <= 0:
+        return None, None
+    last = closes[-1]
+    pct = (last - ev) / ev * 100.0
+    return pct, ev
+
+
+def _cvd_proxy_sum(bars: list[dict]) -> float | None:
+    """
+    Прокси CVD: сумма по барам (taker buy vol − taker sell vol), sell ≈ volume − taker_buy.
+    Нужны поля taker_buy_volume из klines (Binance row[9]).
+    """
+    if not bars:
+        return None
+    s = 0.0
+    for b in bars:
+        vol = _to_float(b.get("volume"))
+        tb = b.get("taker_buy_volume")
+        if tb is None or vol <= 0:
+            return None
+        tb = float(tb)
+        taker_sell = max(0.0, vol - tb)
+        s += tb - taker_sell
+    return s
+
+
 async def _oi_window_change_pct(client: BinanceClient, symbol: str, period: str) -> float | None:
     """Изменение OI от первой до последней точки в окне hist (period совпадает с TF)."""
     limit = int(getattr(config, "EARLY_PUMP_OI_HIST_LIMIT", 8))
@@ -236,6 +269,12 @@ def build_early_pump_alert_text(hits: list[dict]) -> str:
         oi = h.get("oi_change_pct")
         if oi is not None:
             extra.append(f"OI {oi:+.2f}%")
+        eap = h.get("ema_above_pct")
+        if eap is not None:
+            extra.append(f"над EMA {eap:.2f}%")
+        cv = h.get("cvd_proxy")
+        if cv is not None:
+            extra.append(f"CVD∑ {cv:.0f}")
         lines.append(f"  <b>{sym}</b> +{pct}% ({', '.join(extra)})")
     if len(hits) > 25:
         lines.append(f"... и ещё {len(hits) - 25}")
@@ -253,6 +292,8 @@ async def scan_early_pump_hits(*, respect_dedup: bool = True) -> list[dict]:
     cnt_pre = 0
     cnt_after_taker = 0
     cnt_after_btc = 0
+    cnt_after_ema = 0
+    cnt_after_cvd = 0
     cnt_after_oi = 0
 
     async with aiohttp.ClientSession() as session:
@@ -326,6 +367,37 @@ async def scan_early_pump_hits(*, respect_dedup: bool = True) -> list[dict]:
                     base["vs_btc"] = round(base["pct"] - btc_ref_body, 2)
                 cnt_after_btc += 1
 
+                use_ema = getattr(config, "EARLY_PUMP_USE_EMA_FILTER", True)
+                ema_period = int(getattr(config, "EARLY_PUMP_EMA_PERIOD", 20))
+                max_above = float(getattr(config, "EARLY_PUMP_MAX_ABOVE_EMA_PCT", 4.0))
+                ign_ema = getattr(config, "EARLY_PUMP_EMA_IGNORE_EMPTY", True)
+                if use_ema:
+                    d_ep, _ev = _ema_detach_above_pct(candles, ema_period)
+                    if d_ep is None:
+                        if not ign_ema:
+                            continue
+                    elif d_ep < 0 or d_ep > max_above:
+                        continue
+                    if d_ep is not None:
+                        base["ema_above_pct"] = round(d_ep, 2)
+                cnt_after_ema += 1
+
+                use_cvd = getattr(config, "EARLY_PUMP_USE_CVD_FILTER", True)
+                cvd_bars = int(getattr(config, "EARLY_PUMP_CVD_BARS", 12))
+                cvd_min = float(getattr(config, "EARLY_PUMP_CVD_MIN_SUM", 0.0))
+                ign_cvd = getattr(config, "EARLY_PUMP_CVD_IGNORE_EMPTY", True)
+                if use_cvd:
+                    chunk = candles[-cvd_bars:] if len(candles) >= cvd_bars else []
+                    cvd = _cvd_proxy_sum(chunk)
+                    if cvd is None:
+                        if not ign_cvd:
+                            continue
+                    elif cvd <= cvd_min:
+                        continue
+                    if cvd is not None:
+                        base["cvd_proxy"] = round(cvd, 2)
+                cnt_after_cvd += 1
+
                 use_oi = getattr(config, "EARLY_PUMP_USE_OI_FILTER", False)
                 if use_oi:
                     oi_ch = await _oi_window_change_pct(client, symbol, tf)
@@ -361,8 +433,9 @@ async def scan_early_pump_hits(*, respect_dedup: bool = True) -> list[dict]:
 
     if os.getenv("EARLY_PUMP_QUIET_DIAG", "").strip() not in ("1", "true", "yes"):
         print(
-            f"[EARLY] диагностика: тишина+vol: {cnt_pre}, после taker: {cnt_after_taker}, "
-            f"после vs BTC: {cnt_after_btc}, после OI: {cnt_after_oi}, в алерт: {len(hits)}",
+            f"[EARLY] диагностика: тишина+vol: {cnt_pre}, taker: {cnt_after_taker}, "
+            f"vs BTC: {cnt_after_btc}, EMA: {cnt_after_ema}, CVD: {cnt_after_cvd}, OI: {cnt_after_oi}, "
+            f"в алерт: {len(hits)}",
             flush=True,
         )
     return hits

@@ -115,14 +115,22 @@ class BinanceClient:
         for row in data:
             if not isinstance(row, (list, tuple)) or len(row) < 7:
                 continue
-            result.append({
+            item: dict[str, Any] = {
                 "open_time": int(row[0]),
                 "open": float(row[1]),
                 "high": float(row[2]),
                 "low": float(row[3]),
                 "close": float(row[4]),
                 "volume": float(row[5]),
-            })
+            }
+            if len(row) >= 11:
+                try:
+                    item["taker_buy_volume"] = float(row[9])
+                except (TypeError, ValueError, IndexError):
+                    item["taker_buy_volume"] = None
+            else:
+                item["taker_buy_volume"] = None
+            result.append(item)
         return result
 
     async def get_open_interest(self, symbol: str) -> float | None:
