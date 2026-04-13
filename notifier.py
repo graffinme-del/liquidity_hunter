@@ -3,6 +3,8 @@
 """
 from typing import Any
 
+from structure import planned_reward_pct
+
 
 def format_signal(signal: dict) -> str:
     """
@@ -29,6 +31,9 @@ def format_signal(signal: dict) -> str:
     tp_low = min(tp_zone) if isinstance(tp_zone, (list, tuple)) else tp_zone
     tp_high = max(tp_zone) if isinstance(tp_zone, (list, tuple)) else tp_zone
 
+    exp_pct = planned_reward_pct(signal)
+    exp_line = f"Ожидаемый профит к зоне TP: ~{exp_pct:.2f}% (от цены входа, середина зоны)"
+
     lines = [
         f"{emoji} {direction}  {symbol}",
         "",
@@ -38,11 +43,20 @@ def format_signal(signal: dict) -> str:
         f"Стоп: {_fmt(stop)} — тренд сломается, если цена уйдёт туда",
         f"Цель: зона {_fmt(tp_low)}–{_fmt(tp_high)} — туда вероятно дойдёт",
         "",
+        exp_line,
+        "",
         f"RR: {rr:.1f} | ATR%: {atr_pct:.2f}%" if atr_pct else f"RR: {rr:.1f}",
     ]
     if signal.get("taker_trap"):
         lines.append("")
         lines.append("Подготовка к охоте за стопами.")
+    hints = signal.get("orientation_hints")
+    if hints and isinstance(hints, list):
+        lines.append("")
+        lines.append("Ориентиры:")
+        for h in hints:
+            if h:
+                lines.append(f"• {h}")
     return "\n".join(lines)
 
 

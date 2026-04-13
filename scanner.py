@@ -19,7 +19,7 @@ from orientation import (
     build_oi_flow_context,
     should_skip_coin_indicators,
 )
-from structure import atr_pct
+from structure import atr_pct, planned_reward_pct
 from storage.signal_log import log_signal
 from telegram_notify import send_telegram
 
@@ -195,6 +195,16 @@ async def run_tick(
                 await asyncio.sleep(config.SCAN_SYMBOL_PAUSE_SEC)
 
     if not candidates:
+        return None, 0.0
+
+    min_tp = float(getattr(config, "SIGNAL_MIN_TP_MOVE_PCT", 5.0))
+    before_n = len(candidates)
+    candidates = [c for c in candidates if planned_reward_pct(c) >= min_tp]
+    if before_n and not candidates:
+        print(
+            f"[SCANNER] нет сигналов: все {before_n} канд. ниже мин. цели {min_tp}% к TP",
+            flush=True,
+        )
         return None, 0.0
 
     best = max(candidates, key=lambda c: c.get("score", 0))

@@ -189,3 +189,32 @@ def compute_tp_zone_short(
         tp = max(tp, structural)
     zone_width = atr * 0.2
     return (tp - zone_width, tp + zone_width)
+
+
+def planned_reward_pct(signal: dict) -> float:
+    """
+    Плановый профит % от цены входа до середины зоны TP (как в фильтре сканера).
+    LONG: (tp_mid − entry) / entry × 100; SHORT: (entry − tp_mid) / entry × 100.
+    """
+    try:
+        entry = float(signal.get("trigger_price", 0) or 0)
+    except (TypeError, ValueError):
+        return 0.0
+    if entry <= 0:
+        return 0.0
+    tz = signal.get("tp_zone")
+    if isinstance(tz, (list, tuple)) and len(tz) >= 2:
+        tp_mid = (float(tz[0]) + float(tz[1])) / 2.0
+    elif tz is not None:
+        try:
+            tp_mid = float(tz)
+        except (TypeError, ValueError):
+            return 0.0
+    else:
+        return 0.0
+    direction = str(signal.get("direction", "")).upper()
+    if direction == "LONG":
+        return (tp_mid - entry) / entry * 100.0
+    if direction == "SHORT":
+        return (entry - tp_mid) / entry * 100.0
+    return 0.0
