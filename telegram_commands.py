@@ -182,6 +182,10 @@ async def run_telegram_listener() -> None:
                         "command": "volatile",
                         "description": "Топ волатильных (как авто-алерт, с кнопкой обновления)",
                     },
+                    {
+                        "command": "pumpstats",
+                        "description": "Статистика сигналов старт пампа (SQLite)",
+                    },
                 ],
             },
             timeout=20,
@@ -191,7 +195,7 @@ async def run_telegram_listener() -> None:
                 log.warning("setMyCommands HTTP %s: %s", r.status, body[:200])
             else:
                 log.info(
-                    "Меню команд Telegram зарегистрировано (winrate_range, winrate, cancel, volatile)",
+                    "Меню команд Telegram зарегистрировано (winrate_range, winrate, cancel, volatile, pumpstats)",
                 )
 
         print("[TG] long polling запущен (одна сессия, GET getUpdates)", flush=True)
@@ -392,19 +396,35 @@ async def run_telegram_listener() -> None:
                         _schedule_bot_message_delete(chat_id, bot_mid, token, ttl)
                     continue
 
+                if cmd in ("/pumpstats", "/stats_pumps"):
+                    _delete_user_message_later(chat_id, user_msg_id, token)
+                    from pump_stats import pump_stats_report_text
+
+                    bot_mid = await _reply(
+                        http_session,
+                        token,
+                        chat_id,
+                        pump_stats_report_text(),
+                    )
+                    _schedule_bot_message_delete(chat_id, bot_mid, token, ttl)
+                    continue
+
                 if cmd.startswith("/") and cmd not in (
                     "/cancel",
                     "/volatile",
                     "/volitile",
                     "/winrate_range",
                     "/winrate",
+                    "/pumpstats",
+                    "/stats_pumps",
                 ):
                     bot_mid = await _reply(
                         http_session,
                         token,
                         chat_id,
                         "Неизвестная команда.\n"
-                        "Волатильность: <code>/volatile</code> (не <code>/volitile</code>).",
+                        "Волатильность: <code>/volatile</code> (не <code>/volitile</code>).\n"
+                        "Статистика пампов: <code>/pumpstats</code>.",
                     )
                     _schedule_bot_message_delete(chat_id, bot_mid, token, ttl)
                     continue

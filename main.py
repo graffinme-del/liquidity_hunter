@@ -129,6 +129,28 @@ async def run_impulse_loop():
         await asyncio.sleep(interval_sec)
 
 
+async def run_pump_stats_loop():
+    """Оценка сигналов early через 24h (max рост от цены входа), SQLite."""
+    if not getattr(config, "PUMP_STATS_ENABLED", True):
+        return
+    import aiohttp
+
+    from data.binance_client import BinanceClient
+    from pump_stats import evaluate_pending_signals
+
+    await asyncio.sleep(300)
+    while True:
+        try:
+            async with aiohttp.ClientSession() as session:
+                client = BinanceClient(session)
+                n = await evaluate_pending_signals(client)
+                if n:
+                    print(f"[STATS] оценено сигналов пампа: {n}", flush=True)
+        except Exception as e:
+            print(f"[STATS] ошибка: {e}", flush=True)
+        await asyncio.sleep(600)
+
+
 async def main():
     await asyncio.gather(
         run_scanner(),
@@ -137,6 +159,7 @@ async def main():
         run_impulse_loop(),
         run_pump_loop(),
         run_movement_loop(),
+        run_pump_stats_loop(),
         run_telegram_listener(),
     )
 
