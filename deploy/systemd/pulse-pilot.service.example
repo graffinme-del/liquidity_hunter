@@ -1,0 +1,33 @@
+# Пример unit для сервера: бот запускается из РЕПОЗИТОРИЯ liquidity_hunter (не из Pulse_Pilot).
+#
+# Установка:
+#   sudo cp deploy/systemd/pulse-pilot.service.example /etc/systemd/system/pulse-pilot.service
+#   sudo nano /etc/systemd/system/pulse-pilot.service   # поправь User и пути при необходимости
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now pulse-pilot
+#
+# Перед этим в каталоге проекта:
+#   python3 -m venv .venv
+#   .venv/bin/pip install -r requirements.txt
+#   # секреты — в /home/pulse/liquidity_hunter/.env (TELEGRAM_*, BINANCE_*, …)
+
+[Unit]
+Description=Liquidity Hunter (Telegram bot)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pulse
+Group=pulse
+WorkingDirectory=/home/pulse/liquidity_hunter
+
+# Все ключи удобнее держать в .env рядом с проектом:
+EnvironmentFile=-/home/pulse/liquidity_hunter/.env
+
+ExecStart=/home/pulse/liquidity_hunter/.venv/bin/python /home/pulse/liquidity_hunter/main.py
+Restart=on-failure
+RestartSec=15
+
+[Install]
+WantedBy=multi-user.target
