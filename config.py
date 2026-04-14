@@ -53,8 +53,13 @@ TAKER_RATIO_LONG_TRAP = 2.0   # ratio > 2 → много лонгов → бон
 TAKER_RATIO_SHORT_TRAP = 0.5  # ratio < 0.5 → много шортов → бонус к LONG
 TAKER_TRAP_BONUS = 20
 
-# Дедупликация (мягче — больше шансов поймать серию импульсов)
+# Дедупликация: один и тот же план (символ+лонг/шорт+триггер+стоп+середина TP) не повторять N минут.
+# Хранится в data/scanner_dedup.json — общий файл, если запущено несколько процессов бота.
 DEDUP_MINUTES = 30
+
+# Сканер охоты за ликвидностью (scanner.py): плановое движение до зоны TP от цены входа, %
+# Ниже — не отправляем (отсекаются «микро» цели ~1% и т.п.)
+SIGNAL_MIN_TP_MOVE_PCT = 5.0
 
 # Сканер (на слабом VPS частые тики + 50 пар = лаги SSH; поднимай паузы)
 TICK_INTERVAL_SEC = 90  # было 60 — меньше нагрузка на сервер
@@ -112,6 +117,10 @@ EARLY_PUMP_USE_OI_FILTER = True
 EARLY_PUMP_OI_MIN_CHANGE_PCT = 0.12
 EARLY_PUMP_OI_HIST_LIMIT = 8
 EARLY_PUMP_OI_IGNORE_EMPTY = True
+
+# Статистика сигналов early (SQLite data/pump_stats.sqlite), оценка через ~24h
+PUMP_STATS_ENABLED = True
+PUMP_STATS_HIT_MIN_PCT = 5.0   # «взлет»: max за 24h от цены сигнала ≥ этого %
 
 # Импульс 15m — сильный рост за 1–3 свечи (догон может совпадать с поздним этапом)
 IMPULSE_15M_ENABLED = False

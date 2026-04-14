@@ -218,3 +218,28 @@ def planned_reward_pct(signal: dict) -> float:
     if direction == "SHORT":
         return (entry - tp_mid) / entry * 100.0
     return 0.0
+
+
+def signal_plan_fingerprint(signal: dict) -> str:
+    """
+    Ключ дедупликации: символ, направление и округлённые триггер / стоп / середина зоны TP.
+    Одинаковый план не шлём повторно, пока не истечёт окно DEDUP (см. scanner + файл data/scanner_dedup.json).
+    """
+    sym = str(signal.get("symbol", "")).strip().upper()
+    direction = str(signal.get("direction", "")).strip().upper()
+    try:
+        entry = float(signal.get("trigger_price", 0) or 0)
+        stop = float(signal.get("stop", 0) or 0)
+    except (TypeError, ValueError):
+        return f"{sym}|{direction}|invalid"
+    tz = signal.get("tp_zone")
+    if isinstance(tz, (list, tuple)) and len(tz) >= 2:
+        tp_mid = (float(tz[0]) + float(tz[1])) / 2.0
+    elif tz is not None:
+        try:
+            tp_mid = float(tz)
+        except (TypeError, ValueError):
+            tp_mid = 0.0
+    else:
+        tp_mid = 0.0
+    return f"{sym}|{direction}|{entry:.8g}|{stop:.8g}|{tp_mid:.8g}"

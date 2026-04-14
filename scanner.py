@@ -19,13 +19,10 @@ from orientation import (
     build_oi_flow_context,
     should_skip_coin_indicators,
 )
-from structure import atr_pct, planned_reward_pct
+from structure import atr_pct, planned_reward_pct, signal_plan_fingerprint
+from storage.scanner_dedup import clear_plan, is_recent_plan, load_state, mark_plan_sent
 from storage.signal_log import log_signal
 from telegram_notify import send_telegram
-
-
-def _dedup_key(signal: dict) -> tuple:
-    return (signal.get("symbol", ""), signal.get("direction", ""))
 
 
 def _apply_taker_bonus(cand: dict, taker_ratio: Optional[float]) -> None:
@@ -98,12 +95,11 @@ def _tick_interval() -> float:
     return config.TICK_INTERVAL_SEC
 
 
-async def run_tick(
-    client: BinanceClient,
-    last_sent: dict[str, float],
-) -> tuple[Optional[dict], float]:
+async def run_tick(client: BinanceClient) -> tuple[Optional[dict], float]:
     if not _is_trading_hours():
         return None, 0.0
+
+    dedup_sec = float(config.DEDUP_MINUTES * 60)
 
     symbols = await client.get_top_symbols(config.UNIVERSE_TOP_N)
     if not symbols:
@@ -208,9 +204,20 @@ async def run_tick(
         return None, 0.0
 
     best = max(candidates, key=lambda c: c.get("score", 0))
-    key = _dedup_key(best)
-    if key in last_sent and now - last_sent[key] < config.DEDUP_MINUTES * 60:
+    fp = signal_plan_fingerprint(best)
+    # Свежая загрузка: за время обхода пар другой процесс мог записать тот же план.
+    plan_dedup = load_state()
+    if is_recent_plan(fp, plan_dedup, dedup_sec):
+        sym = best.get("symbol", "")
+        print(
+            f"[SCANNER] дубликат плана ({sym} {best.get('direction', '')}), "
+            f"уже был в течение {config.DEDUP_MINUTES} мин — пропуск",
+            flush=True,
+        )
         return None, 0.0
+
+    # Резервируем до отправки в TG — второй процесс на следующем тике увидит ключ в файле.
+    mark_plan_sent(fp, dedup_sec=dedup_sec)
 
     return best, now
 
@@ -219,11 +226,14 @@ async def run_scanner():
     from dotenv import load_dotenv
     load_dotenv()
 
-    last_sent: dict[tuple, float] = {}
-
     async with aiohttp.ClientSession() as session:
         client = BinanceClient(session)
         print("[SCANNER] Liquidity Hunter v1 запущен")
+        print(
+            "[SCANNER] дедуп планов: data/scanner_dedup.json "
+            f"(окно {config.DEDUP_MINUTES} мин; убедитесь, что не запущено два бота на один TG).",
+            flush=True,
+        )
 
 
 
@@ -231,7 +241,7 @@ async def run_scanner():
 
             try:
 
-                winner, _ = await run_tick(client, last_sent)
+                winner, _ = await run_tick(client)
 
                 if winner and _is_trading_hours():
 
@@ -239,8 +249,16 @@ async def run_scanner():
 
                     print(f"\n[СИГНАЛ]\n{text}\n")
 
-                    tg_ok = await send_telegram(text)
+                    _dedup_sec = float(config.DEDUP_MINUTES * 60)
+                    _fp = signal_plan_fingerprint(winner)
+
+                    try:
+                        tg_ok = await send_telegram(text)
+                    except Exception:
+                        clear_plan(_fp, dedup_sec=_dedup_sec)
+                        raise
                     if not tg_ok:
+                        clear_plan(_fp, dedup_sec=_dedup_sec)
                         print(
                             "[SCANNER] send_telegram вернул False — сообщение в TG не ушло "
                             "(проверьте TELEGRAM_BOT_TOKEN и TELEGRAM_CHAT_ID, см. строки [TG] выше).",
@@ -254,20 +272,6 @@ async def run_scanner():
                     except Exception as e:
 
                         print(f"[SCANNER] Ошибка логирования: {e}")
-
-                    now = time.time()
-
-                    last_sent[_dedup_key(winner)] = now
-
-                    # Очистка старых записей
-
-                    cutoff = now - config.DEDUP_MINUTES * 60
-
-                    for k in list(last_sent.keys()):
-
-                        if last_sent[k] < cutoff:
-
-                            del last_sent[k]
 
             except Exception as e:
 
