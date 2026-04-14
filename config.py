@@ -121,6 +121,8 @@ EARLY_PUMP_OI_IGNORE_EMPTY = True
 # Статистика сигналов early (SQLite data/pump_stats.sqlite), оценка через ~24h
 PUMP_STATS_ENABLED = True
 PUMP_STATS_HIT_MIN_PCT = 5.0   # «взлет»: max за 24h от цены сигнала ≥ этого %
+# Автоотчёт в TG (21:00 Мск вместе с дневным отчётом планировщика)
+PUMP_STATS_AUTO_REPORT = True
 
 # Импульс 15m — сильный рост за 1–3 свечи (догон может совпадать с поздним этапом)
 IMPULSE_15M_ENABLED = False

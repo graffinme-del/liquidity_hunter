@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import re
+import time
 from datetime import datetime, timedelta, timezone
 
 import aiohttp
@@ -40,6 +41,50 @@ def _volatile_cooldown_sec() -> float:
         return 30.0
 
 MOSCOW = timezone(timedelta(hours=3))
+
+_TELEGRAM_COMMANDS_PAYLOAD = {
+    "commands": [
+        {
+            "command": "winrate_range",
+            "description": "Winrate за период (DD.MM или DD.MM DD.MM)",
+        },
+        {
+            "command": "winrate",
+            "description": "То же, что winrate_range (короткий вызов)",
+        },
+        {"command": "cancel", "description": "Отменить ввод дат"},
+        {
+            "command": "volatile",
+            "description": "Топ волатильных (как авто-алерт, с кнопкой обновления)",
+        },
+        {
+            "command": "pumpstats",
+            "description": "Статистика сигналов старт пампа (SQLite)",
+        },
+    ],
+}
+
+
+async def _register_bot_commands(session: aiohttp.ClientSession, set_commands_url: str) -> None:
+    """Список команд в меню Telegram (кнопка «Меню» у бота). Для /pumpstats и др."""
+    async with session.post(
+        set_commands_url,
+        json=_TELEGRAM_COMMANDS_PAYLOAD,
+        timeout=20,
+    ) as r:
+        body = await r.text()
+    if r.status != 200:
+        print(f"[TG] setMyCommands FAILED: HTTP {r.status} {body[:800]}", flush=True)
+        log.warning("setMyCommands HTTP %s: %s", r.status, body[:200])
+    else:
+        print(
+            "[TG] setMyCommands OK — в меню бота: /pumpstats, /volatile, /winrate, …",
+            flush=True,
+        )
+        log.info(
+            "Меню команд Telegram зарегистрировано (winrate_range, winrate, cancel, volatile, pumpstats)",
+        )
+
 
 # chat_id -> ожидаем ввод дат следующим сообщением
 _pending_winrate_dates: set[str] = set()
@@ -165,44 +210,18 @@ async def run_telegram_listener() -> None:
 
     async with aiohttp.ClientSession() as http_session:
         await _telegram_prepare_polling(http_session, token)
-        async with http_session.post(
-            set_commands_url,
-            json={
-                "commands": [
-                    {
-                        "command": "winrate_range",
-                        "description": "Winrate за период (DD.MM или DD.MM DD.MM)",
-                    },
-                    {
-                        "command": "winrate",
-                        "description": "То же, что winrate_range (короткий вызов)",
-                    },
-                    {"command": "cancel", "description": "Отменить ввод дат"},
-                    {
-                        "command": "volatile",
-                        "description": "Топ волатильных (как авто-алерт, с кнопкой обновления)",
-                    },
-                    {
-                        "command": "pumpstats",
-                        "description": "Статистика сигналов старт пампа (SQLite)",
-                    },
-                ],
-            },
-            timeout=20,
-        ) as r:
-            body = await r.text()
-            if r.status != 200:
-                log.warning("setMyCommands HTTP %s: %s", r.status, body[:200])
-            else:
-                log.info(
-                    "Меню команд Telegram зарегистрировано (winrate_range, winrate, cancel, volatile, pumpstats)",
-                )
+        await _register_bot_commands(http_session, set_commands_url)
+        last_cmd_reg = time.time()
 
         print("[TG] long polling запущен (одна сессия, GET getUpdates)", flush=True)
         poll_n = 0
         while True:
             poll_n += 1
             try:
+                if time.time() - last_cmd_reg >= 4 * 3600:
+                    await _register_bot_commands(http_session, set_commands_url)
+                    last_cmd_reg = time.time()
+
                 if poll_n % 30 == 1:
                     async with http_session.get(webhook_info_url, timeout=25) as wr:
                         wraw = await wr.text()

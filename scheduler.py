@@ -6,6 +6,7 @@ import asyncio
 import os
 from datetime import datetime, timedelta, timezone
 
+import config
 from report import (
     build_daily_report,
     build_monthly_report,
@@ -55,6 +56,18 @@ async def run_scheduler():
         await send_telegram(report, parse_mode=None)
         last_sent_date = now.date()
         print("[SCHEDULER] Дневной отчёт отправлен")
+
+        if (
+            getattr(config, "PUMP_STATS_AUTO_REPORT", True)
+            and getattr(config, "PUMP_STATS_ENABLED", True)
+        ):
+            try:
+                from pump_stats import pump_stats_report_text
+
+                await send_telegram(pump_stats_report_text(), parse_mode="HTML")
+                print("[SCHEDULER] Отчёт статистики пампов (pump_stats) отправлен")
+            except Exception as e:
+                print(f"[SCHEDULER] Отчёт pump stats: {e}")
 
         if now.weekday() == 6 and last_weekly_sent_date != now.date():
             try:
