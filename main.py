@@ -12,6 +12,7 @@ import config
 from early_pump_scanner import run_early_pump_scan
 from impulse_scanner import run_impulse_scan
 from movement_scanner import run_movement_scan
+from phase1_accumulation import run_phase1_loop
 from pump_screener import run_screener
 from scanner import run_scanner
 from scheduler import run_scheduler
@@ -160,6 +161,7 @@ async def main():
         run_pump_loop(),
         run_movement_loop(),
         run_pump_stats_loop(),
+        run_phase1_loop(),
         run_telegram_listener(),
     )
 

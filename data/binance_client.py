@@ -99,6 +99,22 @@ class BinanceClient:
             out = out[:max_symbols]
         return out
 
+    async def get_24hr_ticker(self, symbol: str) -> dict[str, Any] | None:
+        """Один тикер 24h: quoteVolume, priceChangePercent и др. (для фильтров early pump)."""
+        try:
+            async with self._session.get(
+                f"{self._base}/fapi/v1/ticker/24hr",
+                params={"symbol": symbol},
+                timeout=15,
+            ) as r:
+                r.raise_for_status()
+                data = await r.json()
+        except Exception:
+            return None
+        if not isinstance(data, dict):
+            return None
+        return data
+
     async def get_klines(self, symbol: str, interval: str, limit: int = 100) -> list[dict]:
         params = {"symbol": symbol, "interval": interval, "limit": limit}
         try:
@@ -122,6 +138,57 @@ class BinanceClient:
                 "low": float(row[3]),
                 "close": float(row[4]),
                 "volume": float(row[5]),
+                "close_time": int(row[6]),
+            }
+            if len(row) >= 11:
+                try:
+                    item["taker_buy_volume"] = float(row[9])
+                except (TypeError, ValueError, IndexError):
+                    item["taker_buy_volume"] = None
+            else:
+                item["taker_buy_volume"] = None
+            result.append(item)
+        return result
+
+    async def get_klines_range(
+        self,
+        symbol: str,
+        interval: str,
+        start_ms: int,
+        end_ms: int,
+        *,
+        limit: int = 1500,
+    ) -> list[dict]:
+        """Свечи в диапазоне времени (для статистики после сигнала). Макс. limit 1500 за запрос."""
+        params = {
+            "symbol": symbol,
+            "interval": interval,
+            "startTime": int(start_ms),
+            "endTime": int(end_ms),
+            "limit": min(int(limit), 1500),
+        }
+        try:
+            async with self._session.get(f"{self._base}/fapi/v1/klines", params=params, timeout=30) as r:
+                r.raise_for_status()
+                data = await r.json()
+        except Exception:
+            return []
+
+        if not isinstance(data, list):
+            return []
+
+        result: list[dict] = []
+        for row in data:
+            if not isinstance(row, (list, tuple)) or len(row) < 7:
+                continue
+            item: dict[str, Any] = {
+                "open_time": int(row[0]),
+                "open": float(row[1]),
+                "high": float(row[2]),
+                "low": float(row[3]),
+                "close": float(row[4]),
+                "volume": float(row[5]),
+                "close_time": int(row[6]),
             }
             if len(row) >= 11:
                 try:
@@ -180,6 +247,85 @@ class BinanceClient:
                 out.append({
                     "timestamp": int(row.get("timestamp", 0)),
                     "open_interest": float(row.get("sumOpenInterest", 0)),
+                })
+            except (TypeError, ValueError):
+                continue
+        return out
+
+    async def get_order_book(
+        self,
+        symbol: str,
+        *,
+        limit: int = 100,
+    ) -> dict[str, Any]:
+        """
+        Биржевой стакан (как панель «Биржевой стакан» в терминале).
+        GET /fapi/v1/depth — bids снизу вверх к спреду, asks сверху вниз.
+
+        limit: 5, 10, 20, 50, 100, 500, 1000 (у Binance свой набор допустимых значений).
+        """
+        params = {"symbol": symbol, "limit": int(limit)}
+        try:
+            async with self._session.get(f"{self._base}/fapi/v1/depth", params=params, timeout=15) as r:
+                r.raise_for_status()
+                data = await r.json()
+        except Exception:
+            return {"lastUpdateId": 0, "bids": [], "asks": []}
+
+        if not isinstance(data, dict):
+            return {"lastUpdateId": 0, "bids": [], "asks": []}
+
+        def _levels(raw: Any) -> list[tuple[float, float]]:
+            out: list[tuple[float, float]] = []
+            if not isinstance(raw, list):
+                return out
+            for row in raw:
+                if not isinstance(row, (list, tuple)) or len(row) < 2:
+                    continue
+                try:
+                    out.append((float(row[0]), float(row[1])))
+                except (TypeError, ValueError):
+                    continue
+            return out
+
+        return {
+            "lastUpdateId": int(data.get("lastUpdateId", 0)),
+            "bids": _levels(data.get("bids")),
+            "asks": _levels(data.get("asks")),
+        }
+
+    async def get_recent_trades(self, symbol: str, *, limit: int = 100) -> list[dict[str, Any]]:
+        """
+        Последние сделки (как «Сделки» / Recent trades).
+        GET /fapi/v1/trades — агрегированные по времени исполнения.
+
+        is_buyer_maker: True → продажа агрессором (часто красные в UI),
+                        False → покупка агрессором (зелёные).
+        """
+        lim = max(1, min(int(limit), 1000))
+        params = {"symbol": symbol, "limit": lim}
+        try:
+            async with self._session.get(f"{self._base}/fapi/v1/trades", params=params, timeout=15) as r:
+                r.raise_for_status()
+                data = await r.json()
+        except Exception:
+            return []
+
+        if not isinstance(data, list):
+            return []
+
+        out: list[dict[str, Any]] = []
+        for row in data:
+            if not isinstance(row, dict):
+                continue
+            try:
+                out.append({
+                    "id": int(row.get("id", 0)),
+                    "price": float(row.get("price", 0)),
+                    "qty": float(row.get("qty", 0)),
+                    "quote_qty": float(row.get("quoteQty", 0)),
+                    "time": int(row.get("time", 0)),
+                    "is_buyer_maker": bool(row.get("isBuyerMaker", False)),
                 })
             except (TypeError, ValueError):
                 continue

@@ -57,9 +57,10 @@ TAKER_TRAP_BONUS = 20
 # Хранится в data/scanner_dedup.json — общий файл, если запущено несколько процессов бота.
 DEDUP_MINUTES = 30
 
-# Сканер охоты за ликвидностью (scanner.py): плановое движение до зоны TP от цены входа, %
-# Ниже — не отправляем (отсекаются «микро» цели ~1% и т.п.)
-SIGNAL_MIN_TP_MOVE_PCT = 5.0
+# Сканер охоты за ликвидностью (scanner.py): плановое движение до середины зоны TP от входа, %.
+# 5% и выше обычно отсекает почти все сигналы (TP часто 2–4% из-за структуры/ATR) — останутся только пампы/VOL.
+# Разумный дефолт 2.5–3; «жёстко без микро» — 4–5. Переопределение: .env SIGNAL_MIN_TP_MOVE_PCT=
+SIGNAL_MIN_TP_MOVE_PCT = 2.8
 
 # Сканер (на слабом VPS частые тики + 50 пар = лаги SSH; поднимай паузы)
 TICK_INTERVAL_SEC = 90  # было 60 — меньше нагрузка на сервер
@@ -82,6 +83,10 @@ EARLY_PUMP_TIMEFRAME = "5m"          # 5m | 15m — интервал свечи 
 EARLY_PUMP_INTERVAL_MIN = 3          # как часто опрашивать (реже — меньше нагрузка)
 EARLY_PUMP_MAX_SYMBOLS = 200
 EARLY_PUMP_MIN_QUOTE_VOL_24H = 25_000.0
+# Не слать «старт пампа», если за 24h цена уже ушла на ≥ N % (|priceChangePercent|) — меньше догона вершины.
+# 0 = выключено.
+EARLY_PUMP_SKIP_IF_ABS_CHANGE_24H_PCT = 0.0
+EARLY_PUMP_SKIP_24H_IGNORE_EMPTY = True  # если тикер 24h не пришёл — не отсекать пару
 EARLY_PUMP_SYMBOL_SORT = "abs_change_24h"
 EARLY_PUMP_SHUFFLE = False
 EARLY_PUMP_DEDUP_MIN = 20
@@ -123,6 +128,27 @@ PUMP_STATS_ENABLED = True
 PUMP_STATS_HIT_MIN_PCT = 5.0   # «взлет»: max за 24h от цены сигнала ≥ этого %
 # Автоотчёт в TG (21:00 Мск вместе с дневным отчётом планировщика)
 PUMP_STATS_AUTO_REPORT = True
+
+# Фаза 1 / PRE-PUMP — накопление (скан 5m, тихая 15m, см. phase1_accumulation.py)
+PHASE1_ACCUM_ENABLED = True
+PHASE1_INTERVAL_SEC = 180
+PHASE1_START_DELAY_SEC = 120
+PHASE1_MAX_SYMBOLS = 80
+PHASE1_CONCURRENCY = 8
+PHASE1_DEDUP_SEC = 7200
+PHASE1_OI_GROWTH_MIN = 0.015
+PHASE1_OI_PERIOD = "5m"
+PHASE1_OI_LOOKBACK = 13
+PHASE1_RANGE_PCT_MAX = 0.015
+PHASE1_RANGE_BARS = 12
+PHASE1_LAST_IMPULSE_MAX = 0.007
+PHASE1_VOL_RATIO_MIN = 1.1
+PHASE1_TRAP_BUFFER = 0.002
+PHASE1_SKIP_RECENT_MOVE_PCT = 0.05
+PHASE1_HOUR_BARS = 12
+PHASE1_CVD_REL_MAX = 0.35
+PHASE1_REQUIRE_15M_QUIET = True
+PHASE1_15M_BODY_MAX = 0.008
 
 # Импульс 15m — сильный рост за 1–3 свечи (догон может совпадать с поздним этапом)
 IMPULSE_15M_ENABLED = False

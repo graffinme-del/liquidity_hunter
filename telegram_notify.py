@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import html
 import json
 import logging
 import os
@@ -35,6 +36,55 @@ def _telegram_chat_id_resolved() -> str | None:
 
 def _strip_html_for_plain_fallback(text: str) -> str:
     return re.sub(r"<[^>]+>", "", text)
+
+
+def format_phase1_accumulation_message(payload: dict) -> str:
+    """PRE-PUMP / Фаза 1 — накопление (HTML для Telegram)."""
+    sym = html.escape(str(payload.get("symbol", "")), quote=False)
+    oi_pct = float(payload.get("oi_growth_pct", 0.0))
+    rng_pct = float(payload.get("range_pct", 0.0))
+    vol_r = float(payload.get("vol_ratio", 0.0))
+    hour_w = float(payload.get("recent_width_pct", 0.0))
+    cvd_r = float(payload.get("cvd_rel", 0.0))
+    rh = float(payload.get("range_high", 0.0))
+    rl = float(payload.get("range_low", 0.0))
+    long_e = float(payload.get("long_entry", 0.0))
+    short_e = float(payload.get("short_entry", 0.0))
+    lp = int(payload.get("long_pct", 50))
+    sp = int(payload.get("short_pct", 50))
+    bias = int(payload.get("bias_points", 0))
+
+    def _px(x: float) -> str:
+        if x >= 1000:
+            return f"{x:.4f}"
+        if x >= 1:
+            return f"{x:.6f}"
+        return f"{x:.8f}".rstrip("0").rstrip(".")
+
+    vol_note = "выше среднего" if vol_r > 1.1 else "около среднего"
+
+    return f"""⚠️ <b>ГОТОВИТСЯ ДВИЖЕНИЕ</b> → ставь ловушку
+
+🟡 <b>PRE-PUMP ZONE</b> · Фаза 1 (накопление)
+
+Монета: <b>{sym}</b>
+OI: <b>+{oi_pct:.2f}%</b> (рост за окно)
+Диапазон ({rng_pct:.2f}%): <b>{_px(rh)}</b> – <b>{_px(rl)}</b>
+Час (ширина): <b>{hour_w:.2f}%</b> · Объём: <b>{vol_note}</b> (×{vol_r:.2f})
+CVD (|Δ|/Vol 6б): <b>{cvd_r:.2f}</b>
+
+⚠️ <b>Возможен импульс</b> — «ловушка» на пробой
+
+Стратегия:
+— Лонг стоп: <b>выше</b> диапазона → вход ~{_px(long_e)}
+— Шорт стоп: <b>ниже</b> диапазона → вход ~{_px(short_e)}
+
+Вероятность (bias {bias}/3):
+🟢 Лонг: <b>{lp}%</b>
+🔴 Шорт: <b>{sp}%</b>
+
+<i>5m скан · 15m тихая свеча · без 1h</i>
+""".strip()
 
 
 def ephemeral_delete_seconds() -> int:
