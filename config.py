@@ -98,6 +98,14 @@ EARLY_PUMP_QUIET_RANGE_MAX = 0.85    # если REQUIRE_QUIET: медиана (h
 EARLY_PUMP_BODY_MIN_PCT = 0.35
 EARLY_PUMP_BODY_MAX_PCT = 3.0        # выше — уже разгон по одной свече TF
 EARLY_PUMP_VOL_SPIKE_MULT = 2.0
+# Медиана «объём×цена» по барам до сигнальной (≈ USDT за бар). 0 = выкл. Отсекает пары с крошечной базой и ложными ×30–50.
+EARLY_PUMP_MEDIAN_QUOTE_VOL_MIN = 0.0
+# Мин. notional сигнальной свечи (close×volume). 0 = выкл.
+EARLY_PUMP_SIGNAL_BAR_QUOTE_VOL_MIN = 0.0
+# Верхняя граница vol/медиана: слишком большое кратно часто = низкая ликвидность фона или уже разгон. 0 = выкл.
+EARLY_PUMP_VOL_RATIO_MAX = 28.0
+# Итоговый скоринг 0–100 (см. early_pump_scanner). 0 = не отсекать по баллам; 45–55 заметно сужает выборку.
+EARLY_PUMP_MIN_QUALITY_SCORE = 0.0
 EARLY_PUMP_USE_FORMING_CANDLE = True   # сигнал по текущей незакрытой свече (раньше)
 EARLY_PUMP_FALLBACK_CLOSED = True      # если формирующая не прошла — последняя закрытая
 EARLY_PUMP_FORMING_VOL_RELAX = 0.55    # доля порога vol при неполной свече (× spike)

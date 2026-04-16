@@ -52,6 +52,81 @@ def _median(xs: list[float]) -> float:
     return (s[m - 1] + s[m]) / 2 if len(s) % 2 == 0 else s[m]
 
 
+def _est_quote_usdt(bar: dict) -> float:
+    """Оценка notional бара: close × volume (как у Binance USDT-M)."""
+    c = _to_float(bar.get("close"))
+    v = _to_float(bar.get("volume"))
+    if c <= 0 or v < 0:
+        return 0.0
+    return c * v
+
+
+def _early_pump_quality_score(h: dict) -> float:
+    """
+    0–100: умеренный всплеск объёма, taker, тело в «середине», OI, близость к EMA.
+    Не заменяет гейты — для ранжирования и опц. порога EARLY_PUMP_MIN_QUALITY_SCORE.
+    """
+    vr = float(h.get("vol_ratio") or 0)
+    if 2.0 <= vr <= 10.0:
+        vol_pts = 32.0
+    elif 2.0 <= vr <= 16.0:
+        vol_pts = 24.0
+    elif vr <= 24.0:
+        vol_pts = 14.0
+    else:
+        vol_pts = 0.0
+
+    tr = h.get("taker_ratio")
+    if tr is None:
+        t_pts = 10.0
+    else:
+        tr = float(tr)
+        if tr >= 1.25:
+            t_pts = 26.0
+        elif tr >= 1.12:
+            t_pts = 18.0
+        elif tr >= 1.04:
+            t_pts = 11.0
+        else:
+            t_pts = 3.0
+
+    pct = float(h.get("pct") or 0)
+    if 0.55 <= pct <= 1.8:
+        b_pts = 16.0
+    elif 0.35 <= pct <= 2.5:
+        b_pts = 11.0
+    else:
+        b_pts = 4.0
+
+    oi = h.get("oi_change_pct")
+    if oi is None:
+        oi_pts = 8.0
+    else:
+        oi = float(oi)
+        if oi >= 1.5:
+            oi_pts = 16.0
+        elif oi >= 0.4:
+            oi_pts = 11.0
+        elif oi >= 0.12:
+            oi_pts = 5.0
+        else:
+            oi_pts = 0.0
+
+    eap = h.get("ema_above_pct")
+    if eap is None:
+        ema_pts = 8.0
+    else:
+        eap = float(eap)
+        if 0.0 <= eap <= 1.8:
+            ema_pts = 10.0
+        elif eap <= 3.5:
+            ema_pts = 6.0
+        else:
+            ema_pts = 0.0
+
+    return min(100.0, vol_pts + t_pts + b_pts + oi_pts + ema_pts)
+
+
 def _bar_range_pct(bar: dict) -> float:
     h = _to_float(bar.get("high"))
     l = _to_float(bar.get("low"))
@@ -154,6 +229,19 @@ def _quiet_and_spike(
     if vol_ratio < need:
         return None
 
+    med_qs = [_est_quote_usdt(b) for b in hist_slice]
+    median_quote = _median(med_qs) if med_qs else 0.0
+    signal_quote = _est_quote_usdt(last)
+    mq_min = float(getattr(config, "EARLY_PUMP_MEDIAN_QUOTE_VOL_MIN", 0.0) or 0.0)
+    sq_min = float(getattr(config, "EARLY_PUMP_SIGNAL_BAR_QUOTE_VOL_MIN", 0.0) or 0.0)
+    vr_max = float(getattr(config, "EARLY_PUMP_VOL_RATIO_MAX", 0.0) or 0.0)
+    if mq_min > 0 and median_quote < mq_min:
+        return None
+    if sq_min > 0 and signal_quote < sq_min:
+        return None
+    if vr_max > 0 and vol_ratio > vr_max:
+        return None
+
     close = _to_float(last.get("close"))
     if close < getattr(config, "MIN_PRICE", 0.01):
         return None
@@ -162,6 +250,8 @@ def _quiet_and_spike(
         "pct": round(body, 2),
         "vol_ratio": round(vol_ratio, 2),
         "quiet_range_med": round(range_med, 3),
+        "median_quote_est": round(median_quote, 2),
+        "signal_quote_est": round(signal_quote, 2),
         "close": round(close, 8),
         "tf": tf,
         "forming": forming,
@@ -243,18 +333,37 @@ def build_early_pump_alert_text(hits: list[dict]) -> str:
             f"Без фильтра «тишины»: зелёная свеча {bmin:.1f}–{bmax:.1f}% "
             f"и объём ≥{sp:.1f}× к медиане объёма до неё."
         )
+    mq = float(getattr(config, "EARLY_PUMP_MEDIAN_QUOTE_VOL_MIN", 0.0) or 0.0)
+    sq = float(getattr(config, "EARLY_PUMP_SIGNAL_BAR_QUOTE_VOL_MIN", 0.0) or 0.0)
+    vr_max = float(getattr(config, "EARLY_PUMP_VOL_RATIO_MAX", 0.0) or 0.0)
+    min_q = float(getattr(config, "EARLY_PUMP_MIN_QUALITY_SCORE", 0.0) or 0.0)
+    filt_parts: list[str] = []
+    if mq > 0:
+        filt_parts.append(f"мед.объём(≈USDT)≥{mq:.0f}")
+    if sq > 0:
+        filt_parts.append(f"бар≥{sq:.0f} USDT")
+    if vr_max > 0:
+        filt_parts.append(f"vol/мед≤{vr_max:.0f}×")
+    if min_q > 0:
+        filt_parts.append(f"кач.≥{min_q:.0f}/100")
     lines = [
         f"<b>Старт пампа ({tf})</b>",
         head2,
-        "",
     ]
+    if filt_parts:
+        lines.append(f"<i>Фильтры: {', '.join(filt_parts)}</i>")
+    lines.append("")
     for h in hits[:25]:
         sym = html.escape(str(h.get("symbol", "?")))
         pct = h.get("pct", 0)
         vr = h.get("vol_ratio")
         qmed = h.get("quiet_range_med")
         tr = h.get("taker_ratio")
-        extra = [f"vol×{vr}"]
+        extra = []
+        qs = h.get("quality_score")
+        if qs is not None:
+            extra.append(f"кач.{qs:.0f}/100")
+        extra.append(f"vol×{vr}")
         if h.get("require_quiet", req_q):
             extra.append(f"тишина {qmed}%")
         else:
@@ -431,6 +540,11 @@ async def scan_early_pump_hits(*, respect_dedup: bool = True) -> list[dict]:
                         base["oi_change_pct"] = round(oi_ch, 3)
                 cnt_after_oi += 1
 
+                base["quality_score"] = round(_early_pump_quality_score(base))
+                min_q = float(getattr(config, "EARLY_PUMP_MIN_QUALITY_SCORE", 0.0) or 0.0)
+                if min_q > 0 and base["quality_score"] < min_q:
+                    continue
+
                 base["symbol"] = symbol
                 hits.append(base)
                 if respect_dedup:
@@ -448,7 +562,10 @@ async def scan_early_pump_hits(*, respect_dedup: bool = True) -> list[dict]:
         if _last_early_pump_at[k] < cutoff:
             del _last_early_pump_at[k]
 
-    hits.sort(key=lambda x: x.get("vol_ratio", 0), reverse=True)
+    hits.sort(
+        key=lambda x: (x.get("quality_score", 0), x.get("vol_ratio", 0)),
+        reverse=True,
+    )
 
     if os.getenv("EARLY_PUMP_QUIET_DIAG", "").strip() not in ("1", "true", "yes"):
         print(
