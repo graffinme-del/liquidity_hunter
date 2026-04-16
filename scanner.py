@@ -106,15 +106,30 @@ def _tick_interval() -> float:
     return config.TICK_INTERVAL_SEC
 
 
-async def run_tick(client: BinanceClient) -> tuple[Optional[dict], float]:
-    if not _is_trading_hours():
-        return None, 0.0
+def _tick_stats_dict() -> dict:
+    moscow = timezone(timedelta(hours=3))
+    msk = datetime.now(moscow)
+    return {
+        "trading_hours": _is_trading_hours(),
+        "msk_h": msk.hour,
+        "msk_m": msk.minute,
+        "symbols": 0,
+        "cand_orientation": 0,
+        "cand_min_tp": 0,
+    }
+
+
+async def run_tick(client: BinanceClient) -> tuple[Optional[dict], float, dict]:
+    stats = _tick_stats_dict()
+    if not stats["trading_hours"]:
+        return None, 0.0, stats
 
     dedup_sec = float(config.DEDUP_MINUTES * 60)
 
     symbols = await client.get_top_symbols(config.UNIVERSE_TOP_N)
+    stats["symbols"] = len(symbols)
     if not symbols:
-        return None, 0.0
+        return None, 0.0, stats
 
     candidates: list[dict] = []
     now = time.time()
@@ -201,18 +216,21 @@ async def run_tick(client: BinanceClient) -> tuple[Optional[dict], float]:
             if getattr(config, "SCAN_SYMBOL_PAUSE_SEC", 0) > 0:
                 await asyncio.sleep(config.SCAN_SYMBOL_PAUSE_SEC)
 
+    stats["cand_orientation"] = len(candidates)
+
     if not candidates:
-        return None, 0.0
+        return None, 0.0, stats
 
     min_tp = _signal_min_tp_pct()
     before_n = len(candidates)
     candidates = [c for c in candidates if planned_reward_pct(c) >= min_tp]
+    stats["cand_min_tp"] = len(candidates)
     if before_n and not candidates:
         print(
             f"[SCANNER] нет сигналов: все {before_n} канд. ниже мин. цели {min_tp}% к TP",
             flush=True,
         )
-        return None, 0.0
+        return None, 0.0, stats
 
     best = max(candidates, key=lambda c: c.get("score", 0))
     fp = signal_plan_fingerprint(best)
@@ -225,12 +243,12 @@ async def run_tick(client: BinanceClient) -> tuple[Optional[dict], float]:
             f"уже был в течение {config.DEDUP_MINUTES} мин — пропуск",
             flush=True,
         )
-        return None, 0.0
+        return None, 0.0, stats
 
     # Резервируем до отправки в TG — второй процесс на следующем тике увидит ключ в файле.
     mark_plan_sent(fp, dedup_sec=dedup_sec)
 
-    return best, now
+    return best, now, stats
 
 
 async def run_scanner():
@@ -257,13 +275,36 @@ async def run_scanner():
             flush=True,
         )
 
-
+        hb_sec = 300
+        try:
+            hb_sec = max(0, int(os.getenv("SCANNER_HEARTBEAT_SEC", "300")))
+        except ValueError:
+            hb_sec = 300
+        if hb_sec > 0:
+            print(
+                f"[SCANNER] heartbeat каждые {hb_sec} с (SCANNER_HEARTBEAT_SEC=0 выкл)",
+                flush=True,
+            )
+        last_hb = 0.0
 
         while True:
 
             try:
 
-                winner, _ = await run_tick(client)
+                winner, _, tick_stats = await run_tick(client)
+
+                now_ts = time.time()
+                if hb_sec > 0 and (now_ts - last_hb) >= hb_sec:
+                    last_hb = now_ts
+                    th = "да" if tick_stats.get("trading_hours") else "нет"
+                    print(
+                        f"[SCANNER] heartbeat | МСК "
+                        f"{tick_stats.get('msk_h', 0):02d}:{tick_stats.get('msk_m', 0):02d} | "
+                        f"торг.окно={th} | симв.={tick_stats.get('symbols', 0)} | "
+                        f"канд.после ориентиров={tick_stats.get('cand_orientation', 0)} | "
+                        f"после min TP={tick_stats.get('cand_min_tp', 0)}",
+                        flush=True,
+                    )
 
                 if winner and _is_trading_hours():
 
