@@ -5,6 +5,9 @@
 from __future__ import annotations
 
 import asyncio
+import html
+import logging
+import os
 import random
 import time
 from typing import Any, Optional
@@ -13,8 +16,10 @@ import aiohttp
 
 import config
 from data.binance_client import BinanceClient
-from telegram_notify import VOLATILE_INLINE_KEYBOARD, ephemeral_delete_seconds, send_telegram
+from telegram_notify import VOLATILE_INLINE_KEYBOARD, send_telegram
 from structure import atr_pct
+
+log = logging.getLogger(__name__)
 
 _last_alert_at: dict[str, float] = {}
 
@@ -42,9 +47,23 @@ def build_volatile_alert_text(hits: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def vol_scan_tg_delete_after_sec() -> int:
+    """
+    Автоудаление VOL-дайджеста в TG.
+    По умолчанию 0 — сообщение не удаляется (иначе за 5 мин можно не увидеть).
+    Задать, например: VOL_SCAN_TG_DELETE_AFTER_SEC=300
+    """
+    if "VOL_SCAN_TG_DELETE_AFTER_SEC" not in os.environ:
+        return 0
+    try:
+        return max(0, int(os.getenv("VOL_SCAN_TG_DELETE_AFTER_SEC", "0") or "0"))
+    except ValueError:
+        return 0
+
+
 def _format_vol_tg_line(h: dict) -> str:
     """Одна строка: тикер жирный+курсив, смысл без дублирования цифр."""
-    sym = h.get("symbol", "?")
+    sym = html.escape(str(h.get("symbol", "?")))
     head = f"<b><i>{sym}</i></b>"
     atr = h.get("atr_pct")
     atr_was = h.get("atr_1h_ago")
@@ -221,12 +240,19 @@ async def scan_movement_hits(*, respect_dedup: bool = True) -> list[dict]:
     return hits
 
 
+def _truncate_for_telegram_html(text: str, max_len: int = 4000) -> str:
+    """Лимит Telegram sendMessage — 4096; оставляем запас под HTML."""
+    if len(text) <= max_len:
+        return text
+    return text[: max_len - 80] + "\n\n<i>…обрезано (лимит Telegram 4096 символов)</i>"
+
+
 async def send_volatile_digest_manual(chat_id: str | None = None) -> None:
     """Принудительно собрать и отправить тот же дайджест, что и периодический VOL-скан (с кнопкой обновления)."""
     hits = await scan_movement_hits(respect_dedup=False)
-    text = build_volatile_alert_text(hits)
-    sec = ephemeral_delete_seconds()
-    await send_telegram(
+    text = _truncate_for_telegram_html(build_volatile_alert_text(hits))
+    sec = vol_scan_tg_delete_after_sec()
+    ok = await send_telegram(
         text,
         chat_id=chat_id,
         parse_mode="HTML",
@@ -234,24 +260,40 @@ async def send_volatile_digest_manual(chat_id: str | None = None) -> None:
         reply_markup=VOLATILE_INLINE_KEYBOARD,
         timeout_sec=120,
     )
+    if not ok:
+        raise RuntimeError("send_telegram вернул ошибку (см. лог выше)")
 
 
-async def run_movement_scan(send_tg: bool = True) -> list[dict]:
+async def run_movement_scan(send_tg: bool = True) -> tuple[list[dict], bool]:
     """
-    Возвращает список {symbol, ...метрики} для пар с резким движением.
+    Возвращает (hits, tg_ok).
+    tg_ok: True если в TG ничего не слали, или отправка прошла успешно.
     """
     hits = await scan_movement_hits(respect_dedup=True)
 
-    if send_tg and hits:
-        text = build_volatile_alert_text(hits)
-        sec = ephemeral_delete_seconds()
-        await send_telegram(text, parse_mode="HTML", delete_after_sec=sec if sec > 0 else None)
+    if not send_tg or not hits:
+        return hits, True
 
-    return hits
+    text = build_volatile_alert_text(hits)
+    sec = vol_scan_tg_delete_after_sec()
+    ok = await send_telegram(text, parse_mode="HTML", delete_after_sec=sec if sec > 0 else None)
+    if ok:
+        log.info(
+            "[VOL] В Telegram отправлено (%s пар). Удаление сообщения: через %s с "
+            "(VOL_SCAN_TG_DELETE_AFTER_SEC; 0 = не удалять).",
+            len(hits),
+            sec,
+        )
+    else:
+        log.error(
+            "[VOL] send_telegram не удалось (%s пар). Проверьте TELEGRAM_BOT_TOKEN и TELEGRAM_CHAT_ID в .env",
+            len(hits),
+        )
+    return hits, ok
 
 
 def main():
-    hits = asyncio.run(run_movement_scan(send_tg=False))
+    hits, _ = asyncio.run(run_movement_scan(send_tg=False))
     print(f"Найдено: {len(hits)}")
     for h in hits[:30]:
         print(h)

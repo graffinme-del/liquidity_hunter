@@ -53,6 +53,8 @@ def format_phase1_accumulation_message(payload: dict) -> str:
     lp = int(payload.get("long_pct", 50))
     sp = int(payload.get("short_pct", 50))
     bias = int(payload.get("bias_points", 0))
+    score = int(payload.get("entry_score", 0))
+    parts = payload.get("score_parts") or {}
 
     def _px(x: float) -> str:
         if x >= 1000:
@@ -63,11 +65,18 @@ def format_phase1_accumulation_message(payload: dict) -> str:
 
     vol_note = "выше среднего" if vol_r > 1.1 else "около среднего"
 
+    sp_str = ""
+    if isinstance(parts, dict) and parts:
+        bits = [f"{k}={v:.0f}" for k, v in sorted(parts.items()) if isinstance(v, (int, float))]
+        if bits:
+            sp_str = "\nСкоринг: <b>" + ", ".join(bits) + "</b>"
+
     return f"""⚠️ <b>ГОТОВИТСЯ ДВИЖЕНИЕ</b> → ставь ловушку
 
 🟡 <b>PRE-PUMP ZONE</b> · Фаза 1 (накопление)
 
 Монета: <b>{sym}</b>
+Оценка сетапа: <b>{score}/100</b>{sp_str}
 OI: <b>+{oi_pct:.2f}%</b> (рост за окно)
 Диапазон ({rng_pct:.2f}%): <b>{_px(rh)}</b> – <b>{_px(rl)}</b>
 Час (ширина): <b>{hour_w:.2f}%</b> · Объём: <b>{vol_note}</b> (×{vol_r:.2f})

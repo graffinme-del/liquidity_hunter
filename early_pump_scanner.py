@@ -332,6 +332,25 @@ async def scan_early_pump_hits(*, respect_dedup: bool = True) -> list[dict]:
                         await asyncio.sleep(pause)
                     continue
 
+                thr_24 = float(getattr(config, "EARLY_PUMP_SKIP_IF_ABS_CHANGE_24H_PCT", 0.0) or 0.0)
+                if thr_24 > 0:
+                    t24 = await client.get_24hr_ticker(symbol)
+                    if t24:
+                        try:
+                            ap = abs(float(t24.get("priceChangePercent", 0.0)))
+                        except (TypeError, ValueError):
+                            ap = 0.0
+                        if ap >= thr_24:
+                            pause = getattr(config, "SCAN_SYMBOL_PAUSE_SEC", 0) or 0
+                            if pause > 0:
+                                await asyncio.sleep(pause)
+                            continue
+                    elif not getattr(config, "EARLY_PUMP_SKIP_24H_IGNORE_EMPTY", True):
+                        pause = getattr(config, "SCAN_SYMBOL_PAUSE_SEC", 0) or 0
+                        if pause > 0:
+                            await asyncio.sleep(pause)
+                        continue
+
                 candles = await client.get_klines(symbol, tf, 150)
                 if len(candles) < 10:
                     continue
@@ -443,13 +462,24 @@ async def scan_early_pump_hits(*, respect_dedup: bool = True) -> list[dict]:
 
 async def run_early_pump_scan(send_tg: bool = True) -> tuple[list[dict], bool]:
     hits = await scan_early_pump_hits(respect_dedup=True)
-    if not send_tg or not hits:
+    if not hits:
         return hits, True
-    text = build_early_pump_alert_text(hits)
-    sec = ephemeral_delete_seconds()
-    ok = await send_telegram(text, parse_mode="HTML", delete_after_sec=sec if sec > 0 else None)
-    if ok:
-        log.info("[EARLY] Старт пампа: отправлено в TG (%s пар)", len(hits))
+    tg_ok = True
+    if send_tg:
+        text = build_early_pump_alert_text(hits)
+        sec = ephemeral_delete_seconds()
+        tg_ok = await send_telegram(text, parse_mode="HTML", delete_after_sec=sec if sec > 0 else None)
+        if tg_ok:
+            log.info("[EARLY] Старт пампа: отправлено в TG (%s пар)", len(hits))
+        else:
+            log.error("[EARLY] send_telegram не удалось (%s пар)", len(hits))
     else:
-        log.error("[EARLY] send_telegram не удалось (%s пар)", len(hits))
-    return hits, ok
+        tg_ok = False
+    try:
+        from pump_stats import record_early_pump_signals
+
+        tf = str(hits[0].get("tf") or getattr(config, "EARLY_PUMP_TIMEFRAME", "5m"))
+        record_early_pump_signals(hits, tf, bool(send_tg and tg_ok))
+    except Exception:
+        log.exception("pump_stats record")
+    return hits, tg_ok

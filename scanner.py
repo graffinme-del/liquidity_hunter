@@ -25,6 +25,17 @@ from storage.signal_log import log_signal
 from telegram_notify import send_telegram
 
 
+def _signal_min_tp_pct() -> float:
+    """Порог из .env SIGNAL_MIN_TP_MOVE_PCT или config.SIGNAL_MIN_TP_MOVE_PCT."""
+    raw = os.getenv("SIGNAL_MIN_TP_MOVE_PCT", "").strip()
+    if raw:
+        try:
+            return float(raw)
+        except ValueError:
+            pass
+    return float(getattr(config, "SIGNAL_MIN_TP_MOVE_PCT", 5.0))
+
+
 def _apply_taker_bonus(cand: dict, taker_ratio: Optional[float]) -> None:
     """Перекос лонгов/шортов — бонус к score (подготовка к охоте)."""
     if taker_ratio is None:
@@ -193,7 +204,7 @@ async def run_tick(client: BinanceClient) -> tuple[Optional[dict], float]:
     if not candidates:
         return None, 0.0
 
-    min_tp = float(getattr(config, "SIGNAL_MIN_TP_MOVE_PCT", 5.0))
+    min_tp = _signal_min_tp_pct()
     before_n = len(candidates)
     candidates = [c for c in candidates if planned_reward_pct(c) >= min_tp]
     if before_n and not candidates:
@@ -229,6 +240,17 @@ async def run_scanner():
     async with aiohttp.ClientSession() as session:
         client = BinanceClient(session)
         print("[SCANNER] Liquidity Hunter v1 запущен")
+        import notifier as _notifier_mod
+
+        print(
+            f"[SCANNER] pid={os.getpid()} | notifier={getattr(_notifier_mod, '__file__', '?')}",
+            flush=True,
+        )
+        print(
+            f"[SCANNER] мин. профит к TP: {_signal_min_tp_pct()}% "
+            "(переменная SIGNAL_MIN_TP_MOVE_PCT или config.py)",
+            flush=True,
+        )
         print(
             "[SCANNER] дедуп планов: data/scanner_dedup.json "
             f"(окно {config.DEDUP_MINUTES} мин; убедитесь, что не запущено два бота на один TG).",
@@ -245,33 +267,39 @@ async def run_scanner():
 
                 if winner and _is_trading_hours():
 
-                    text = format_signal(winner)
-
-                    print(f"\n[СИГНАЛ]\n{text}\n")
-
                     _dedup_sec = float(config.DEDUP_MINUTES * 60)
                     _fp = signal_plan_fingerprint(winner)
-
-                    try:
-                        tg_ok = await send_telegram(text)
-                    except Exception:
-                        clear_plan(_fp, dedup_sec=_dedup_sec)
-                        raise
-                    if not tg_ok:
+                    min_tp = _signal_min_tp_pct()
+                    pr = planned_reward_pct(winner)
+                    if pr + 1e-9 < min_tp:
                         clear_plan(_fp, dedup_sec=_dedup_sec)
                         print(
-                            "[SCANNER] send_telegram вернул False — сообщение в TG не ушло "
-                            "(проверьте TELEGRAM_BOT_TOKEN и TELEGRAM_CHAT_ID, см. строки [TG] выше).",
+                            f"[SCANNER] БЛОК перед TG: плановый профит {pr:.4f}% < {min_tp}% — не отправляем. "
+                            "Если это видишь часто в логе, на сервере крутится старый код или второй процесс.",
                             flush=True,
                         )
+                    else:
+                        text = format_signal(winner)
 
-                    try:
+                        print(f"\n[СИГНАЛ]\n{text}\n")
 
-                        log_signal(winner)
+                        try:
+                            tg_ok = await send_telegram(text)
+                        except Exception:
+                            clear_plan(_fp, dedup_sec=_dedup_sec)
+                            raise
+                        if not tg_ok:
+                            clear_plan(_fp, dedup_sec=_dedup_sec)
+                            print(
+                                "[SCANNER] send_telegram вернул False — сообщение в TG не ушло "
+                                "(проверьте TELEGRAM_BOT_TOKEN и TELEGRAM_CHAT_ID, см. строки [TG] выше).",
+                                flush=True,
+                            )
 
-                    except Exception as e:
-
-                        print(f"[SCANNER] Ошибка логирования: {e}")
+                        try:
+                            log_signal(winner)
+                        except Exception as e:
+                            print(f"[SCANNER] Ошибка логирования: {e}")
 
             except Exception as e:
 
