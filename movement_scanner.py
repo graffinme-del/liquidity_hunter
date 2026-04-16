@@ -16,7 +16,7 @@ import aiohttp
 
 import config
 from data.binance_client import BinanceClient
-from telegram_notify import VOLATILE_INLINE_KEYBOARD, send_telegram
+from telegram_notify import VOLATILE_INLINE_KEYBOARD, ephemeral_delete_seconds, send_telegram
 from structure import atr_pct
 
 log = logging.getLogger(__name__)
@@ -50,15 +50,15 @@ def build_volatile_alert_text(hits: list[dict]) -> str:
 def vol_scan_tg_delete_after_sec() -> int:
     """
     Автоудаление VOL-дайджеста в TG.
-    По умолчанию 0 — сообщение не удаляется (иначе за 5 мин можно не увидеть).
-    Задать, например: VOL_SCAN_TG_DELETE_AFTER_SEC=300
+    Если задан VOL_SCAN_TG_DELETE_AFTER_SEC — он главный (0 = не удалять только VOL).
+    Иначе — как у прочих алертов: TELEGRAM_DELETE_ALERTS_AFTER_SEC (по умолчанию 300).
     """
-    if "VOL_SCAN_TG_DELETE_AFTER_SEC" not in os.environ:
-        return 0
-    try:
-        return max(0, int(os.getenv("VOL_SCAN_TG_DELETE_AFTER_SEC", "0") or "0"))
-    except ValueError:
-        return 0
+    if "VOL_SCAN_TG_DELETE_AFTER_SEC" in os.environ:
+        try:
+            return max(0, int(os.getenv("VOL_SCAN_TG_DELETE_AFTER_SEC", "0") or "0"))
+        except ValueError:
+            return 0
+    return ephemeral_delete_seconds()
 
 
 def _format_vol_tg_line(h: dict) -> str:
@@ -279,8 +279,8 @@ async def run_movement_scan(send_tg: bool = True) -> tuple[list[dict], bool]:
     ok = await send_telegram(text, parse_mode="HTML", delete_after_sec=sec if sec > 0 else None)
     if ok:
         log.info(
-            "[VOL] В Telegram отправлено (%s пар). Удаление сообщения: через %s с "
-            "(VOL_SCAN_TG_DELETE_AFTER_SEC; 0 = не удалять).",
+            "[VOL] В Telegram отправлено (%s пар). Удаление через %s с "
+            "(VOL_SCAN_TG_DELETE_AFTER_SEC или TELEGRAM_DELETE_ALERTS_AFTER_SEC; 0 = не удалять).",
             len(hits),
             sec,
         )
