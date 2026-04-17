@@ -142,6 +142,26 @@ def _reversal_enabled() -> bool:
     return bool(getattr(config, "REVERSAL_ENABLED", False))
 
 
+async def _reversal_symbol_list(client: BinanceClient, max_sym: int) -> tuple[list[str], str]:
+    """top = крупный объём; movers = кто уже шевелится за 24h (лучше для разворотов на альтах)."""
+    mode = (
+        os.getenv("REVERSAL_SYMBOL_UNIVERSE")
+        or getattr(config, "REVERSAL_SYMBOL_UNIVERSE", "movers")
+        or "movers"
+    ).strip().lower()
+    qv = _cfg_float("REVERSAL_MIN_QUOTE_VOL_24H", getattr(config, "REVERSAL_MIN_QUOTE_VOL_24H", 25_000.0))
+    if mode in ("mover", "movers", "abs_change", "volatile"):
+        syms = await client.get_symbols_for_movement_scan(
+            qv,
+            99999,
+            sort_by="abs_change_24h",
+        )
+        random.shuffle(syms)
+        return syms[:max_sym], f"movers(|Δ24h|), qv≥{qv:.0f}"
+    syms = await client.get_top_symbols(limit=max_sym)
+    return syms, "top_volume"
+
+
 async def run_reversal_scan_once() -> list[dict]:
     if not _reversal_enabled():
         return []
@@ -155,11 +175,11 @@ async def run_reversal_scan_once() -> list[dict]:
             del _last_sent[k]
 
     raw: list[dict] = []
+    universe_desc = ""
 
     async with aiohttp.ClientSession() as session:
         client = BinanceClient(session)
-        symbols = await client.get_top_symbols(limit=max_sym)
-        random.shuffle(symbols)
+        symbols, universe_desc = await _reversal_symbol_list(client, max_sym)
 
         sem = asyncio.Semaphore(concurrent)
 
@@ -181,15 +201,29 @@ async def run_reversal_scan_once() -> list[dict]:
             continue
         hits.append(sig)
 
+    log.info(
+        "[REVERSAL] скан: %s | пар=%s | кандидатов=%s | после дедуп=%s",
+        universe_desc,
+        len(symbols),
+        len(raw),
+        len(hits),
+    )
+
     return hits
 
 
 async def run_reversal_loop() -> None:
     if not _reversal_enabled():
-        log.info("[REVERSAL] disabled (REVERSAL_ENABLED=0)")
+        log.info(
+            "[REVERSAL] выключено: в .env задайте REVERSAL_ENABLED=1 (или True в config), иначе скан не крутится",
+        )
         return
     interval = max(60, _cfg_int("REVERSAL_INTERVAL_SEC", getattr(config, "REVERSAL_INTERVAL_SEC", 180)))
     delay = max(0, _cfg_int("REVERSAL_START_DELAY_SEC", getattr(config, "REVERSAL_START_DELAY_SEC", 180)))
+    log.info(
+        "[REVERSAL] включено: каждые %ss лог строки «скан: …» — смотрите кандидатов и дедуп",
+        interval,
+    )
     if delay:
         await asyncio.sleep(delay)
 

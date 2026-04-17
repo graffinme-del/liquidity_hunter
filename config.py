@@ -204,29 +204,33 @@ VOL_SCAN_STALE_ATR_PCT = 1.5          # выше этого ATR%
 VOL_SCAN_STALE_ROC_MAX = 0.4          # и ROC1h ниже — в список не попадаем
 
 # Разворот: контекст старшего TF + отказ на младшем (reversal_scanner.py, detectors/reversal_tf_pair.py)
+# Разворот: по умолчанию выкл., пока не поставите REVERSAL_ENABLED=1 в .env на сервере
 REVERSAL_ENABLED = False
 REVERSAL_INTERVAL_SEC = 180
 REVERSAL_START_DELAY_SEC = 180
 REVERSAL_MAX_SYMBOLS = 80
 REVERSAL_CONCURRENCY = 8
 REVERSAL_DEDUP_SEC = 7200
+# movers = пары с большим |%24h| (как VOL); top = топ по объёму (BTC/ETH — мало подходящих разворотов)
+REVERSAL_SYMBOL_UNIVERSE = "movers"
+REVERSAL_MIN_QUOTE_VOL_24H = 25_000.0
 REVERSAL_SHORT_ENABLED = True
 REVERSAL_LONG_ENABLED = True
 REVERSAL_PAIR_4H_1H_ENABLED = True
 REVERSAL_PAIR_1H_15M_ENABLED = True
-# Контекст 4h (перед шортом — рост; перед лонгом — падение)
-REVERSAL_CTX_4H_ATR_MIN = 0.5
+# Контекст 4h (перед шортом — рост; перед лонгом — падение). Было слишком жёстко — не было сигналов неделями.
+REVERSAL_CTX_4H_ATR_MIN = 0.35
 REVERSAL_CTX_4H_ROC_LOOKBACK = 6
-REVERSAL_CTX_4H_ROC_MIN_PCT = 5.0
+REVERSAL_CTX_4H_ROC_MIN_PCT = 2.2
 # Триггер 1h при паре 4h→1h
-REVERSAL_TRIG_1H_SWING_LOOKBACK = 24
-REVERSAL_TRIG_1H_MIN_RANGE_PCT = 0.12
-REVERSAL_TRIG_1H_WICK_MIN = 0.35
+REVERSAL_TRIG_1H_SWING_LOOKBACK = 18
+REVERSAL_TRIG_1H_MIN_RANGE_PCT = 0.08
+REVERSAL_TRIG_1H_WICK_MIN = 0.30
 # Контекст 1h при паре 1h→15m
-REVERSAL_CTX_1H_ATR_MIN = 0.28
+REVERSAL_CTX_1H_ATR_MIN = 0.22
 REVERSAL_CTX_1H_ROC_LOOKBACK = 12
-REVERSAL_CTX_1H_ROC_MIN_PCT = 3.0
+REVERSAL_CTX_1H_ROC_MIN_PCT = 1.8
 # Триггер 15m
-REVERSAL_TRIG_15M_SWING_LOOKBACK = 24
-REVERSAL_TRIG_15M_MIN_RANGE_PCT = 0.08
-REVERSAL_TRIG_15M_WICK_MIN = 0.35
+REVERSAL_TRIG_15M_SWING_LOOKBACK = 20
+REVERSAL_TRIG_15M_MIN_RANGE_PCT = 0.06
+REVERSAL_TRIG_15M_WICK_MIN = 0.30
