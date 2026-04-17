@@ -201,6 +201,16 @@ async def run_reversal_scan_once() -> list[dict]:
             continue
         hits.append(sig)
 
+    def _rev_sort_key(h: dict) -> float:
+        atr = float(h.get("ctx_atr_pct") or 0.0)
+        trg = float(h.get("trig_range_pct") or 0.0)
+        return atr + 0.25 * trg
+
+    hits.sort(key=_rev_sort_key, reverse=True)
+    max_rev = _cfg_int("REVERSAL_MAX_ALERTS_PER_SCAN", getattr(config, "REVERSAL_MAX_ALERTS_PER_SCAN", 5))
+    if max_rev > 0 and len(hits) > max_rev:
+        hits = hits[:max_rev]
+
     log.info(
         "[REVERSAL] скан: %s | пар=%s | кандидатов=%s | после дедуп=%s",
         universe_desc,

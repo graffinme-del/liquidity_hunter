@@ -567,6 +567,10 @@ async def scan_early_pump_hits(*, respect_dedup: bool = True) -> list[dict]:
         reverse=True,
     )
 
+    max_alert = int(getattr(config, "EARLY_PUMP_MAX_ALERTS_PER_SCAN", 5) or 0)
+    if max_alert > 0 and len(hits) > max_alert:
+        hits = hits[:max_alert]
+
     if os.getenv("EARLY_PUMP_QUIET_DIAG", "").strip() not in ("1", "true", "yes"):
         print(
             f"[EARLY] диагностика: тишина+vol: {cnt_pre}, taker: {cnt_after_taker}, "

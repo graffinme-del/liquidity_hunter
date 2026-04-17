@@ -80,7 +80,7 @@ PUMP_CHECK_INTERVAL_MIN = 60     # проверка раз в час
 # Старт пампа: 5m раньше 15m; незакрытая свеча — ещё раньше (больше ложных)
 EARLY_PUMP_ENABLED = True
 EARLY_PUMP_TIMEFRAME = "5m"          # 5m | 15m — интервал свечи для «старта»
-EARLY_PUMP_INTERVAL_MIN = 3          # как часто опрашивать (реже — меньше нагрузка)
+EARLY_PUMP_INTERVAL_MIN = 8          # реже опрос — меньше спама в TG
 EARLY_PUMP_MAX_SYMBOLS = 200
 EARLY_PUMP_MIN_QUOTE_VOL_24H = 25_000.0
 # Не слать «старт пампа», если за 24h цена уже ушла на ≥ N % (|priceChangePercent|) — меньше догона вершины.
@@ -105,7 +105,8 @@ EARLY_PUMP_SIGNAL_BAR_QUOTE_VOL_MIN = 0.0
 # Верхняя граница vol/медиана: слишком большое кратно часто = низкая ликвидность фона или уже разгон. 0 = выкл.
 EARLY_PUMP_VOL_RATIO_MAX = 28.0
 # Итоговый скоринг 0–100 (см. early_pump_scanner). 0 = не отсекать по баллам; 45–55 заметно сужает выборку.
-EARLY_PUMP_MIN_QUALITY_SCORE = 0.0
+EARLY_PUMP_MIN_QUALITY_SCORE = 72.0
+EARLY_PUMP_MAX_ALERTS_PER_SCAN = 5   # в одном сообщении не больше N пар (0 = без лимита)
 EARLY_PUMP_USE_FORMING_CANDLE = True   # сигнал по текущей незакрытой свече (раньше)
 EARLY_PUMP_FALLBACK_CLOSED = True      # если формирующая не прошла — последняя закрытая
 EARLY_PUMP_FORMING_VOL_RELAX = 0.55    # доля порога vol при неполной свече (× spike)
@@ -211,7 +212,8 @@ VOL_SCAN_STALE_ROC_MAX = 0.4          # и ROC1h ниже — в список н
 # Разворот: контекст старшего TF + отказ на младшем (reversal_scanner.py, detectors/reversal_tf_pair.py)
 # Разворот: по умолчанию выкл., пока не поставите REVERSAL_ENABLED=1 в .env на сервере
 REVERSAL_ENABLED = False
-REVERSAL_INTERVAL_SEC = 180
+REVERSAL_INTERVAL_SEC = 600
+REVERSAL_MAX_ALERTS_PER_SCAN = 5
 REVERSAL_START_DELAY_SEC = 180
 REVERSAL_MAX_SYMBOLS = 80
 REVERSAL_CONCURRENCY = 8
