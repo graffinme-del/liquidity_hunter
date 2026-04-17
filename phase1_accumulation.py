@@ -12,6 +12,7 @@ import logging
 import os
 import random
 import time
+from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -248,7 +249,11 @@ class Phase1Snapshot:
         }
 
 
-async def evaluate_phase1_symbol(client: BinanceClient, symbol: str) -> Phase1Snapshot | None:
+async def evaluate_phase1_symbol(client: BinanceClient, symbol: str) -> tuple[Phase1Snapshot | None, str]:
+    """
+    Возвращает (снимок | None, причина отсева для лога).
+    Причина \"ok\" если снимок есть.
+    """
     range_max = _cfg_float("PHASE1_RANGE_PCT_MAX", 0.01)
     impulse_max = _cfg_float("PHASE1_LAST_IMPULSE_MAX", 0.007)
     vol_hard_min = _cfg_float("PHASE1_VOL_HARD_MIN", 1.05)
@@ -260,6 +265,8 @@ async def evaluate_phase1_symbol(client: BinanceClient, symbol: str) -> Phase1Sn
     oi_limit = max(6, _cfg_int("PHASE1_OI_LOOKBACK", 13))
     require_15m = _cfg_bool("PHASE1_REQUIRE_15M_QUIET", True)
     m15_body_max = _cfg_float("PHASE1_15M_BODY_MAX", 0.008)
+    require_cvd_accel = _cfg_bool("PHASE1_REQUIRE_CVD_ACCEL", True)
+    require_squeeze = _cfg_bool("PHASE1_REQUIRE_SQUEEZE", True)
 
     squeeze_bars = max(2, min(5, _cfg_int("PHASE1_SQUEEZE_BARS", 3)))
     squeeze_top = _cfg_float("PHASE1_SQUEEZE_TOP_FRAC", 0.15)
@@ -270,15 +277,15 @@ async def evaluate_phase1_symbol(client: BinanceClient, symbol: str) -> Phase1Sn
     closed = _closed_only(raw_5m)
     need = max(50, range_bars + hour_bars + 8)
     if len(closed) < need:
-        return None
+        return None, "insufficient_5m"
 
     oi_ser = await client.get_open_interest_hist(symbol, period=oi_period, limit=oi_limit)
     if len(oi_ser) < 4:
-        return None
+        return None, "oi_hist_short"
     o_first = float(oi_ser[0].get("open_interest", 0) or 0.0)
     o_last = float(oi_ser[-1].get("open_interest", 0) or 0.0)
     if o_first <= 0:
-        return None
+        return None, "oi_zero"
     oi_growth = (o_last - o_first) / o_first
 
     seg = closed[-range_bars:]
@@ -288,32 +295,32 @@ async def evaluate_phase1_symbol(client: BinanceClient, symbol: str) -> Phase1Sn
     range_h = max(highs)
     range_l = min(lows)
     if close_ref <= 0:
-        return None
+        return None, "bad_close"
     range_pct = (range_h - range_l) / close_ref
     if range_pct >= range_max:
-        return None
+        return None, "range_wide"
 
     o_last_c = float(closed[-1]["open"])
     c_last = float(closed[-1]["close"])
     last_impulse = abs(c_last - o_last_c) / o_last_c if o_last_c else 1.0
     if last_impulse >= impulse_max:
-        return None
+        return None, "impulse_big"
 
     vols_pre = [float(r["volume"]) for r in closed[-21:-1]]
     if len(vols_pre) < 20:
-        return None
+        return None, "vol_base_short"
     sma_v = sum(vols_pre) / 20.0
     vol_last = float(closed[-1]["volume"])
     vol_ratio = vol_last / sma_v if sma_v > 0 else 0.0
     if vol_ratio < vol_hard_min:
-        return None
+        return None, "vol_low"
 
     hour_seg = closed[-hour_bars:]
     hh = max(float(r["high"]) for r in hour_seg)
     ll = min(float(r["low"]) for r in hour_seg)
     recent_width = (hh - ll) / close_ref if close_ref else 1.0
     if recent_width > pump_skip:
-        return None
+        return None, "hour_wide"
 
     cseg = closed[-6:]
     deltas = [_taker_delta(r) for r in cseg]
@@ -323,26 +330,26 @@ async def evaluate_phase1_symbol(client: BinanceClient, symbol: str) -> Phase1Sn
 
     cvd_last3 = sum(deltas[-3:])
     cvd_prev3 = sum(deltas[-6:-3])
-    if cvd_last3 <= cvd_prev3 or cvd_last3 <= 0:
-        return None
+    if require_cvd_accel and (cvd_last3 <= cvd_prev3 or cvd_last3 <= 0):
+        return None, "cvd_fail"
 
     last_for_squeeze = closed[-squeeze_bars:]
     squeeze_ok = _squeeze_high_ok(last_for_squeeze, range_h, range_l, squeeze_top)
-    if not squeeze_ok:
-        return None
+    if require_squeeze and not squeeze_ok:
+        return None, "squeeze_fail"
 
     if require_15m:
         raw_15 = await client.get_klines(symbol, "15m", 16)
         c15 = _closed_only(raw_15)
         if not c15:
-            return None
+            return None, "15m_empty"
         lr = c15[-1]
         o15, c15f = float(lr["open"]), float(lr["close"])
         if o15 <= 0:
-            return None
+            return None, "15m_bad"
         body15 = abs(c15f - o15) / o15
         if body15 >= m15_body_max:
-            return None
+            return None, "15m_loud"
 
     closes_5m = [float(c["close"]) for c in closed]
     macd_hist = _macd_hist_last(closes_5m) if use_macd else None
@@ -363,12 +370,12 @@ async def evaluate_phase1_symbol(client: BinanceClient, symbol: str) -> Phase1Sn
         cvd_last3=cvd_last3,
         cvd_prev3=cvd_prev3,
         oi_acc=oi_acc,
-        squeeze_ok=True,
+        squeeze_ok=squeeze_ok,
         macd_hist=macd_hist,
         use_macd=use_macd,
     )
     if score < min_score:
-        return None
+        return None, "score_low"
 
     bias = 0
     if cvd_last3 > cvd_prev3:
@@ -385,7 +392,7 @@ async def evaluate_phase1_symbol(client: BinanceClient, symbol: str) -> Phase1Sn
     long_ent = range_h * (1.0 + buffer)
     short_ent = range_l * (1.0 - buffer)
 
-    return Phase1Snapshot(
+    snap = Phase1Snapshot(
         symbol=symbol,
         oi_growth=oi_growth,
         range_pct=range_pct,
@@ -403,6 +410,26 @@ async def evaluate_phase1_symbol(client: BinanceClient, symbol: str) -> Phase1Sn
         entry_score=score,
         score_parts=parts,
     )
+    return snap, "ok"
+
+
+async def _phase1_symbol_list(client: BinanceClient, max_sym: int) -> tuple[list[str], str]:
+    mode = (
+        os.getenv("PHASE1_SYMBOL_UNIVERSE")
+        or getattr(config, "PHASE1_SYMBOL_UNIVERSE", "movers")
+        or "movers"
+    ).strip().lower()
+    qv = _cfg_float("PHASE1_MIN_QUOTE_VOL_24H", getattr(config, "PHASE1_MIN_QUOTE_VOL_24H", 25_000.0))
+    if mode in ("mover", "movers", "abs_change", "volatile"):
+        syms = await client.get_symbols_for_movement_scan(
+            qv,
+            99999,
+            sort_by="abs_change_24h",
+        )
+        random.shuffle(syms)
+        return syms[:max_sym], f"movers(|Δ24h|), qv≥{qv:.0f}"
+    syms = await client.get_top_symbols(limit=max_sym)
+    return syms, "top_volume"
 
 
 async def run_phase1_loop() -> None:
@@ -423,30 +450,35 @@ async def run_phase1_loop() -> None:
         client = BinanceClient(session)
         while True:
             try:
-                symbols = await client.get_top_symbols(limit=max_sym)
-                random.shuffle(symbols)
+                symbols, uni_desc = await _phase1_symbol_list(client, max_sym)
                 now = time.time()
                 for k, ts in list(_last_sent.items()):
                     if now - ts > dedup * 4:
                         del _last_sent[k]
 
                 sem = asyncio.Semaphore(concurrent)
+                fail_counts: dict[str, int] = defaultdict(int)
+                sent_n = 0
 
                 async def _one(sym: str) -> None:
+                    nonlocal sent_n
                     async with sem:
                         t = time.time()
                         la = _last_sent.get(sym)
                         if la is not None and t - la < dedup:
+                            fail_counts["dedup_skip"] += 1
                             return
-                        snap = await evaluate_phase1_symbol(client, sym)
+                        snap, reason = await evaluate_phase1_symbol(client, sym)
                         if snap is None:
+                            fail_counts[reason] += 1
                             return
-                        _last_sent[sym] = time.time()
                         ok = await send_telegram(
                             format_phase1_accumulation_message(snap.as_payload()),
                             delete_after_sec=None,
                         )
                         if ok:
+                            sent_n += 1
+                            _last_sent[sym] = time.time()
                             log.info(
                                 "[PHASE1] sent %s score=%s OI=%.2f%% range=%.2f%% vol_x=%.2f",
                                 sym,
@@ -457,6 +489,15 @@ async def run_phase1_loop() -> None:
                             )
 
                 await asyncio.gather(*(_one(s) for s in symbols))
+
+                top_fail = sorted(fail_counts.items(), key=lambda x: -x[1])[:8]
+                log.info(
+                    "[PHASE1] цикл: %s | пар=%s | в TG=%s | топ отсевов: %s",
+                    uni_desc,
+                    len(symbols),
+                    sent_n,
+                    top_fail,
+                )
             except asyncio.CancelledError:
                 raise
             except Exception:
