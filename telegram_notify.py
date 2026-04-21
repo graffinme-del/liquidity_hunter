@@ -96,6 +96,25 @@ CVD (|Δ|/Vol 6б): <b>{cvd_r:.2f}</b>
 """.strip()
 
 
+def format_squeeze_oi_message(symbol: str, ev: dict) -> str:
+    """SQUEEZE + OI: боковик 5m, сжатые EMA, две бычьи свечи, OI↑ при плоской цене."""
+    sym = html.escape(str(symbol), quote=False)
+    return f"""🧱 <b>SQUEEZE + OI</b> (5m) · лонг-контекст
+
+Монета: <b>{sym}</b>
+
+Боковик: range≈<b>{float(ev.get('range_pct', 0)):.2f}%</b> (≈{int(ev.get('compress_bars', 0))} баров)
+EMA сближены: <b>{float(ev.get('ema_spread_pct', 0)):.2f}%</b> (20/50/100)
+MACD hist (пред-импульс): <b>{float(ev.get('macd_hist', 0)):.6g}</b> · ATR% ≈ <b>{float(ev.get('atr_pre_pct', 0)):.3f}%</b>
+OI за окно: <b>+{float(ev.get('oi_growth_pct', 0)):.2f}%</b>
+Дрейф цены в сжатии: <b>{float(ev.get('price_drift_compress_pct', 0)):.2f}%</b>
+
+Пробой: close <b>{float(ev.get('breakout_close', 0)):.8g}</b> &gt; high боковика <b>{float(ev.get('range_high', 0)):.8g}</b>
+
+<i>Не сигнал входа сам по себе — фильтр по сетапу; лимит/стоп по своей модели.</i>
+""".strip()
+
+
 def ephemeral_delete_seconds() -> int:
     """TELEGRAM_DELETE_ALERTS_AFTER_SEC (по умолчанию 300); 0 = не удалять."""
     try:

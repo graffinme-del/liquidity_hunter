@@ -14,6 +14,7 @@ from impulse_scanner import run_impulse_scan
 from movement_scanner import run_movement_scan
 from phase1_accumulation import run_phase1_loop
 from pump_screener import run_screener
+from squeeze_oi_scanner import run_squeeze_oi_loop
 from reversal_scanner import run_reversal_loop
 from scanner import run_scanner
 from scheduler import run_scheduler
@@ -163,6 +164,7 @@ async def main():
         run_movement_loop(),
         run_pump_stats_loop(),
         run_phase1_loop(),
+        run_squeeze_oi_loop(),
         run_reversal_loop(),
         run_telegram_listener(),
     )

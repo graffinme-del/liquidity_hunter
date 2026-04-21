@@ -139,8 +139,9 @@ PUMP_STATS_HIT_MIN_PCT = 5.0   # «взлет»: max за 24h от цены си
 PUMP_STATS_AUTO_REPORT = True
 
 # Фаза 1 / PRE-PUMP — накопление (скан 5m, тихая 15m, см. phase1_accumulation.py)
-# v2: скоринг 0–100 (порог PHASE1_MIN_SCORE), поджим к хаю, ускорение CVD, опц. MACD
-PHASE1_ACCUM_ENABLED = True
+# По умолчанию ВЫКЛ: сигналы часто не совпадают с реальным «пампом» по времени и засоряют чат.
+# Включить: PHASE1_ACCUM_ENABLED=1 в .env
+PHASE1_ACCUM_ENABLED = False
 PHASE1_INTERVAL_SEC = 180
 PHASE1_START_DELAY_SEC = 120
 PHASE1_MAX_SYMBOLS = 80
@@ -170,6 +171,21 @@ PHASE1_SCORE_OI_LO = 0.02
 PHASE1_SCORE_OI_HI = 0.045
 PHASE1_SCORE_VOL_LO = 1.5
 PHASE1_SCORE_VOL_HI = 2.5
+# Мин. рост OI за окно (доля, 0.005 = 0.5%). 0 = не требовать. Режет «oi=0» в скоринге.
+PHASE1_MIN_OI_GROWTH_FRAC = 0.0
+
+# SQUEEZE 5m + OI (отдельный цикл squeeze_oi_scanner.py; по умолчанию выкл.)
+SQUEEZE_OI_ENABLED = False
+SQUEEZE_OI_INTERVAL_SEC = 180
+SQUEEZE_OI_START_DELAY_SEC = 90
+SQUEEZE_OI_MAX_SYMBOLS = 50
+SQUEEZE_OI_CONCURRENCY = 6
+SQUEEZE_OI_DEDUP_SEC = 3600
+SQUEEZE_OI_SYMBOL_UNIVERSE = "top"  # top | movers
+SQUEEZE_OI_MIN_QUOTE_VOL_24H = 25_000.0
+SQUEEZE_OI_KLINES_LIMIT = 220
+SQUEEZE_OI_HIST_LIMIT = 60
+SQUEEZE_OI_COMPRESS_BARS = 36
 
 # Импульс 15m — сильный рост за 1–3 свечи (догон может совпадать с поздним этапом)
 IMPULSE_15M_ENABLED = False
