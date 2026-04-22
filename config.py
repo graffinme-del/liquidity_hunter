@@ -175,13 +175,15 @@ PHASE1_SCORE_VOL_HI = 2.5
 PHASE1_MIN_OI_GROWTH_FRAC = 0.0
 
 # SQUEEZE 5m + OI (отдельный цикл squeeze_oi_scanner.py; по умолчанию выкл.)
+# Пороги «узкого боковика» в detectors/squeeze_oi_breakout.py ослаблены vs первую версию;
+# точная настройка — через .env (SQUEEZE_OI_MAX_RANGE_PCT и т.д.). Диагностика: SQUEEZE_OI_DEBUG=1.
 SQUEEZE_OI_ENABLED = False
 SQUEEZE_OI_INTERVAL_SEC = 180
 SQUEEZE_OI_START_DELAY_SEC = 90
-SQUEEZE_OI_MAX_SYMBOLS = 50
+SQUEEZE_OI_MAX_SYMBOLS = 120  # за один цикл; «шире охват» — 200–300 + movers
 SQUEEZE_OI_CONCURRENCY = 6
 SQUEEZE_OI_DEDUP_SEC = 3600
-SQUEEZE_OI_SYMBOL_UNIVERSE = "top"  # top | movers
+SQUEEZE_OI_SYMBOL_UNIVERSE = "movers"  # movers — чаще альты в боковике; top — почти только BTC/ETH
 SQUEEZE_OI_MIN_QUOTE_VOL_24H = 25_000.0
 SQUEEZE_OI_KLINES_LIMIT = 220
 SQUEEZE_OI_HIST_LIMIT = 60

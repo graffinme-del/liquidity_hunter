@@ -97,21 +97,26 @@ CVD (|Δ|/Vol 6б): <b>{cvd_r:.2f}</b>
 
 
 def format_squeeze_oi_message(symbol: str, ev: dict) -> str:
-    """SQUEEZE + OI: боковик 5m, сжатые EMA, две бычьи свечи, OI↑ при плоской цене."""
+    """
+    SQUEEZE + OI — отдельный визуальный шаблон (и тег #LH_SQUEEZE_OI для поиска в чате).
+    """
     sym = html.escape(str(symbol), quote=False)
-    return f"""🧱 <b>SQUEEZE + OI</b> (5m) · лонг-контекст
+    tag = "#LH_SQUEEZE_OI"
+    return f"""▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬
+🟦 <b>Liquidity Hunter — SQUEEZE + OI</b>
+<code>{tag}</code> · <b>5m</b> · лонг-контекст
+▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬
 
-Монета: <b>{sym}</b>
+📌 Пара: <b>{sym}</b>
 
-Боковик: range≈<b>{float(ev.get('range_pct', 0)):.2f}%</b> (≈{int(ev.get('compress_bars', 0))} баров)
-EMA сближены: <b>{float(ev.get('ema_spread_pct', 0)):.2f}%</b> (20/50/100)
-MACD hist (пред-импульс): <b>{float(ev.get('macd_hist', 0)):.6g}</b> · ATR% ≈ <b>{float(ev.get('atr_pre_pct', 0)):.3f}%</b>
-OI за окно: <b>+{float(ev.get('oi_growth_pct', 0)):.2f}%</b>
-Дрейф цены в сжатии: <b>{float(ev.get('price_drift_compress_pct', 0)):.2f}%</b>
+Боковик: <b>{float(ev.get('range_pct', 0)):.2f}%</b> по диапазону (~{int(ev.get('compress_bars', 0))}×5m)
+EMA 20/50/100: разброс <b>{float(ev.get('ema_spread_pct', 0)):.2f}%</b>
+MACD hist: <b>{float(ev.get('macd_hist', 0)):.6g}</b> · ATR% <b>{float(ev.get('atr_pre_pct', 0)):.3f}%</b>
+OI: <b>+{float(ev.get('oi_growth_pct', 0)):.2f}%</b> · дрейф в сжатии <b>{float(ev.get('price_drift_compress_pct', 0)):.2f}%</b>
 
-Пробой: close <b>{float(ev.get('breakout_close', 0)):.8g}</b> &gt; high боковика <b>{float(ev.get('range_high', 0)):.8g}</b>
+Пробой: close <b>{float(ev.get('breakout_close', 0)):.8g}</b> &gt; верх боковика <b>{float(ev.get('range_high', 0)):.8g}</b>
 
-<i>Не сигнал входа сам по себе — фильтр по сетапу; лимит/стоп по своей модели.</i>
+<i>Сетап, не готовый вход. В чате ищи по тегу выше.</i>
 """.strip()
 
 
@@ -191,6 +196,7 @@ async def send_telegram(
     text: str,
     *,
     chat_id: str | None = None,
+    message_thread_id: int | None = None,
     parse_mode: str | None = "HTML",
     delete_after_sec: int | None = None,
     reply_markup: dict | None = None,
@@ -221,6 +227,8 @@ async def send_telegram(
         payload["parse_mode"] = parse_mode
     if reply_markup is not None:
         payload["reply_markup"] = reply_markup
+    if message_thread_id is not None:
+        payload["message_thread_id"] = int(message_thread_id)
 
     try:
         ok, data, body = await _post(payload)
@@ -229,6 +237,8 @@ async def send_telegram(
             if "parse" in desc or "entities" in desc or "can't find" in desc:
                 plain = _strip_html_for_plain_fallback(text)
                 payload2 = {"chat_id": cid, "text": plain}
+                if message_thread_id is not None:
+                    payload2["message_thread_id"] = int(message_thread_id)
                 if reply_markup is not None:
                     payload2["reply_markup"] = reply_markup
                 ok, data, body = await _post(payload2)

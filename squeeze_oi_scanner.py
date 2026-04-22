@@ -8,7 +8,7 @@ import logging
 import os
 import random
 import time
-from collections import defaultdict
+from collections import Counter, defaultdict
 
 import aiohttp
 
@@ -67,10 +67,40 @@ async def _symbol_list(client: BinanceClient, max_sym: int) -> tuple[list[str], 
     return syms, "top_volume"
 
 
+def _debug_rejects() -> bool:
+    return os.getenv("SQUEEZE_OI_DEBUG", "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _squeeze_telegram_overrides() -> tuple[str | None, int | None]:
+    """Отдельный чат/топик только для SQUEEZE+OI (опционально)."""
+    cid = (os.getenv("SQUEEZE_OI_TELEGRAM_CHAT_ID") or "").strip()
+    if len(cid) >= 2 and cid[0] == cid[-1] and cid[0] in "\"'":
+        cid = cid[1:-1].strip()
+    tid_raw = (os.getenv("SQUEEZE_OI_TELEGRAM_TOPIC_ID") or "").strip()
+    tid: int | None = None
+    if tid_raw:
+        try:
+            tid = int(tid_raw)
+        except ValueError:
+            tid = None
+    return (cid or None), tid
+
+
 async def run_squeeze_oi_loop() -> None:
     if not _cfg_bool("SQUEEZE_OI_ENABLED", False):
         log.info("[SQUEEZE_OI] disabled (SQUEEZE_OI_ENABLED=0)")
         return
+
+    scid, stid = _squeeze_telegram_overrides()
+    log.info(
+        "[SQUEEZE_OI] enabled — не все альты Binance: только USDT perpetual, "
+        "фильтр объёма 24h и лимит пар за цикл (см. SQUEEZE_OI_MAX_SYMBOLS / UNIVERSE). "
+        "DEBUG отсечек: SQUEEZE_OI_DEBUG=1"
+    )
+    if scid:
+        log.info("[SQUEEZE_OI] TG → отдельный chat_id (SQUEEZE_OI_TELEGRAM_CHAT_ID)")
+    if stid is not None:
+        log.info("[SQUEEZE_OI] TG → topic_id=%s (форум-ветка)", stid)
 
     interval = max(60, _cfg_int("SQUEEZE_OI_INTERVAL_SEC", 180))
     max_sym = max(10, _cfg_int("SQUEEZE_OI_MAX_SYMBOLS", 50))
@@ -97,6 +127,8 @@ async def run_squeeze_oi_loop() -> None:
                 sem = asyncio.Semaphore(concurrent)
                 fail_counts: dict[str, int] = defaultdict(int)
                 sent_n = 0
+                dbg = _debug_rejects()
+                miss_reasons: Counter[str] = Counter()
 
                 async def _one(sym: str) -> None:
                     nonlocal sent_n
@@ -114,13 +146,20 @@ async def run_squeeze_oi_loop() -> None:
                         c5 = [dict(c) for c in closed]
                         attach_atr14_wilder(c5)
                         oi_s = await client.get_open_interest_hist(sym, "5m", oi_limit)
-                        ev = evaluate_squeeze_oi_breakout(c5, oi_s)
+                        ff: list[str] = []
+                        ev = evaluate_squeeze_oi_breakout(
+                            c5, oi_s, first_fail=ff if dbg else None
+                        )
                         if ev is None:
                             fail_counts["no_match"] += 1
+                            if dbg and ff:
+                                miss_reasons[ff[0]] += 1
                             return
                         ok = await send_telegram(
                             format_squeeze_oi_message(sym, ev),
                             delete_after_sec=None,
+                            chat_id=scid,
+                            message_thread_id=stid,
                         )
                         if ok:
                             sent_n += 1
@@ -142,6 +181,9 @@ async def run_squeeze_oi_loop() -> None:
                     sent_n,
                     top_fail,
                 )
+                if dbg and miss_reasons:
+                    top_miss = miss_reasons.most_common(12)
+                    log.info("[SQUEEZE_OI] DEBUG первые отсечки после precheck: %s", top_miss)
             except asyncio.CancelledError:
                 raise
             except Exception:
