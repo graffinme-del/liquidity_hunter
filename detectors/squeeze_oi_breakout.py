@@ -13,17 +13,45 @@ import config as lh_config
 
 
 def _env_int(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is not None and str(raw).strip() != "":
+        try:
+            return max(1, int(raw))
+        except (TypeError, ValueError):
+            pass
     try:
-        return max(1, int(os.getenv(name, str(default)) or str(default)))
+        v = getattr(lh_config, name, None)
+        if v is not None:
+            return max(1, int(v))
     except (TypeError, ValueError):
-        return default
+        pass
+    return max(1, default)
+
+
+def _median(vals: list[float]) -> float:
+    if not vals:
+        return 0.0
+    s = sorted(vals)
+    m = len(s) // 2
+    if len(s) % 2:
+        return float(s[m])
+    return float(s[m - 1] + s[m]) / 2.0
 
 
 def _env_float(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is not None and str(raw).strip() != "":
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            pass
     try:
-        return float(os.getenv(name, str(default)) or str(default))
+        v = getattr(lh_config, name, None)
+        if v is not None:
+            return float(v)
     except (TypeError, ValueError):
-        return default
+        pass
+    return default
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -97,7 +125,9 @@ def attach_atr14_wilder(candles: list[dict]) -> None:
 
 
 def squeeze_precheck_5m(candles: list[dict], compress_bars: int) -> bool:
-    if len(candles) < compress_bars + 110:
+    vol_lb = _env_int("SQUEEZE_OI_PRE_BREAKOUT_VOL_BARS", 20)
+    min_len = max(compress_bars + 110, vol_lb + 102)
+    if len(candles) < min_len:
         return False
     c1, c2 = candles[-2], candles[-1]
     try:
@@ -129,12 +159,15 @@ def evaluate_squeeze_oi_breakout(
     macd_hist_max_ratio = _env_float("SQUEEZE_OI_MACD_HIST_MAX_RATIO", 0.003)
     atr_max_pct = _env_float("SQUEEZE_OI_ATR_MAX_PCT", 0.38)
     atr_median_mult = _env_float("SQUEEZE_OI_ATR_MEDIAN_MULT", 2.0)
-    min_body_pct = _env_float("SQUEEZE_OI_MIN_BODY_PCT", 0.04)
-    min_oi_growth_pct = _env_float("SQUEEZE_OI_MIN_OI_GROWTH_PCT", 0.35)
+    min_body_pct = _env_float("SQUEEZE_OI_MIN_BODY_PCT", 0.04)  # минимальный «зелёный» хвост; импульс ниже отдельно
+    min_oi_growth_pct = _env_float("SQUEEZE_OI_MIN_OI_GROWTH_PCT", 1.5)
+    vol_lb = _env_int("SQUEEZE_OI_PRE_BREAKOUT_VOL_BARS", 20)
+    vol_mult = _env_float("SQUEEZE_OI_BREAKOUT_VOL_MEDIAN_MULT", 2.0)
+    impulse_each_pct = _env_float("SQUEEZE_OI_IMPULSE_EACH_BAR_MIN_BODY_PCT", 0.8)
+    impulse_two_pct = _env_float("SQUEEZE_OI_IMPULSE_TWO_BAR_MOVE_MIN_PCT", 0.8)
     max_price_drift_pct = _env_float("SQUEEZE_OI_MAX_PRICE_DRIFT_PCT", 2.4)
     min_oi_points = _env_int("SQUEEZE_OI_MIN_OI_POINTS", 6)
-    # По умолчанию OI не обязателен: иначе на многих парах/окнах сигналов почти нет. Включить строгость: SQUEEZE_OI_REQUIRE_OI=1
-    require_oi = _env_bool("SQUEEZE_OI_REQUIRE_OI", False)
+    require_oi = _env_bool("SQUEEZE_OI_REQUIRE_OI", True)
     skip_atr_median = _env_bool("SQUEEZE_OI_SKIP_ATR_MEDIAN_CHECK", False)
     breakout_relax_pct = _env_float("SQUEEZE_OI_BREAKOUT_RELAX_PCT", 0.06)
     # Доля от range_high: close >= range_high * (1 - x/100)
@@ -243,7 +276,7 @@ def evaluate_squeeze_oi_breakout(
             return None
         body_pct = (cl - o) / o * 100.0
         if body_pct < min_body_pct:
-            _reject(f"body_small<{min_body_pct}%")
+            _reject(f"body_tiny<{min_body_pct}%")
             return None
 
     close_last = float(candles[-1]["close"])
@@ -259,6 +292,45 @@ def evaluate_squeeze_oi_breakout(
     drift_pct = abs(cN - c0) / c0 * 100.0
     if drift_pct > max_price_drift_pct:
         _reject(f"price_drift>{max_price_drift_pct}% (got {drift_pct:.2f})")
+        return None
+
+    # Импульс: объём пробойных свечей vs медиана объёма на 20 закрытых 5m ДО пробоя (не включая -2,-1)
+    if n < vol_lb + 2:
+        _reject("short_series_for_vol_median")
+        return None
+    pre_breakout = candles[-(vol_lb + 2) : -2]
+    if len(pre_breakout) != vol_lb:
+        _reject("pre_breakout_vol_window")
+        return None
+    vols_pre = [float(c.get("volume", 0) or 0) for c in pre_breakout]
+    med_vol = _median(vols_pre)
+    if med_vol <= 0:
+        _reject("vol_median_zero")
+        return None
+    v2 = float(candles[-2].get("volume", 0) or 0)
+    v1 = float(candles[-1].get("volume", 0) or 0)
+    thr_v = vol_mult * med_vol
+    if v2 < thr_v or v1 < thr_v:
+        _reject(
+            f"vol_vs_median<{vol_mult}x (med={med_vol:.4g} need>={thr_v:.4g} v[-2]={v2:.4g} v[-1]={v1:.4g})"
+        )
+        return None
+
+    for i in (-2, -1):
+        c = candles[i]
+        o = float(c["open"])
+        cl = float(c["close"])
+        body_pct = (cl - o) / o * 100.0
+        if body_pct < impulse_each_pct:
+            _reject(f"impulse_each_body<{impulse_each_pct}% (bar {i})")
+            return None
+    o_first = float(candles[-2]["open"])
+    if o_first <= 0:
+        _reject("impulse_open_bad")
+        return None
+    two_bar_pct = (close_last - o_first) / o_first * 100.0
+    if two_bar_pct < impulse_two_pct:
+        _reject(f"impulse_two_bar<{impulse_two_pct}% (got {two_bar_pct:.2f})")
         return None
 
     oi_growth_pct = 0.0
@@ -308,4 +380,9 @@ def evaluate_squeeze_oi_breakout(
         "breakout_close": close_last,
         "range_high": range_high,
         "oi_optional": not require_oi,
+        "vol_median_pre": med_vol,
+        "vol_mult_used": vol_mult,
+        "vol_breakout_min": thr_v,
+        "vol_lb_used": vol_lb,
+        "impulse_two_bar_pct": two_bar_pct,
     }

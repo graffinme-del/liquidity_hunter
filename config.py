@@ -186,10 +186,16 @@ SQUEEZE_OI_DEDUP_SEC = 3600
 SQUEEZE_OI_SYMBOL_UNIVERSE = "movers"  # movers — чаще альты в боковике; top — почти только BTC/ETH
 SQUEEZE_OI_MIN_QUOTE_VOL_24H = 25_000.0
 SQUEEZE_OI_KLINES_LIMIT = 220
-SQUEEZE_OI_HIST_LIMIT = 60
+SQUEEZE_OI_HIST_LIMIT = 96
 SQUEEZE_OI_COMPRESS_BARS = 36
-# True — без роста OI сигнала не будет (жёстко). False — только цена/индикаторы (OI в сообщении справочно).
-SQUEEZE_OI_REQUIRE_OI = False
+# Серьёзный режим: обязательный OI и импульс (объём / тело) — меньше шума.
+SQUEEZE_OI_REQUIRE_OI = True
+SQUEEZE_OI_MIN_OI_GROWTH_PCT = 1.5
+SQUEEZE_OI_PRE_BREAKOUT_VOL_BARS = 20
+SQUEEZE_OI_BREAKOUT_VOL_MEDIAN_MULT = 2.0
+SQUEEZE_OI_IMPULSE_EACH_BAR_MIN_BODY_PCT = 0.8
+SQUEEZE_OI_IMPULSE_TWO_BAR_MOVE_MIN_PCT = 0.8
+SQUEEZE_OI_MIN_OI_POINTS = 12
 # Сообщения SQUEEZE+OI в TG удаляются через N сек (меньше спама). 0 = не удалять.
 SQUEEZE_OI_TELEGRAM_DELETE_AFTER_SEC = 60
 
