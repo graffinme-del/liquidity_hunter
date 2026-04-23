@@ -16,6 +16,7 @@ from notifier import format_signal
 from orientation import (
     apply_h1_orientation,
     apply_oi_orientation,
+    apply_trinity_orientation,
     build_oi_flow_context,
     should_skip_coin_indicators,
 )
@@ -61,6 +62,8 @@ def _passes_orientation_pipeline(
     Возвращает False, если кандидата не брать.
     """
     if apply_oi_orientation(cand, oi_flow_ctx):
+        return False
+    if apply_trinity_orientation(cand, candles_15m, oi_flow_ctx):
         return False
     if apply_h1_orientation(cand, candles_1h):
         return False
