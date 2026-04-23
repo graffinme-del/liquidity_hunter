@@ -116,7 +116,7 @@ OI: <b>{float(ev.get('oi_growth_pct', 0)):+.2f}%</b>{' <i>(рост OI не бы
 Дрейф в сжатии: <b>{float(ev.get('price_drift_compress_pct', 0)):.2f}%</b>
 
 Импульс (2 пробойные 5m): ход open→close через обе: <b>{float(ev.get('impulse_two_bar_pct', 0)):.2f}%</b>
-Объём: обе свечи ≥ <b>{float(ev.get('vol_mult_used', 0)):.1f}×</b> медианы пред. {int(ev.get('vol_lb_used', 20))} баров (медиана базы ≈ <b>{float(ev.get('vol_median_pre', 0)):.6g}</b>)
+Объём: последняя ≥ <b>{float(ev.get('vol_mult_used', 0)):.2f}×</b> медианы, предпоследняя ≥ <b>{float(ev.get('vol_mult_2nd_used', 0)):.2f}×</b> (база {int(ev.get('vol_lb_used', 20))} баров, med≈<b>{float(ev.get('vol_median_pre', 0)):.6g}</b>)
 
 Пробой: close <b>{float(ev.get('breakout_close', 0)):.8g}</b> &gt; верх боковика <b>{float(ev.get('range_high', 0)):.8g}</b>
 

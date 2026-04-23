@@ -160,13 +160,15 @@ def evaluate_squeeze_oi_breakout(
     atr_max_pct = _env_float("SQUEEZE_OI_ATR_MAX_PCT", 0.38)
     atr_median_mult = _env_float("SQUEEZE_OI_ATR_MEDIAN_MULT", 2.0)
     min_body_pct = _env_float("SQUEEZE_OI_MIN_BODY_PCT", 0.04)  # минимальный «зелёный» хвост; импульс ниже отдельно
-    min_oi_growth_pct = _env_float("SQUEEZE_OI_MIN_OI_GROWTH_PCT", 1.5)
+    min_oi_growth_pct = _env_float("SQUEEZE_OI_MIN_OI_GROWTH_PCT", 1.05)
     vol_lb = _env_int("SQUEEZE_OI_PRE_BREAKOUT_VOL_BARS", 20)
-    vol_mult = _env_float("SQUEEZE_OI_BREAKOUT_VOL_MEDIAN_MULT", 2.0)
+    vol_mult = _env_float("SQUEEZE_OI_BREAKOUT_VOL_MEDIAN_MULT", 1.75)
+    # Предпоследняя пробойная свеча часто слабее по объёму — отдельный множитель к медиане (не к «полной» дуге 2×).
+    vol_mult_2nd = _env_float("SQUEEZE_OI_BREAKOUT_VOL_2ND_BAR_MULT", 1.35)
     impulse_each_pct = _env_float("SQUEEZE_OI_IMPULSE_EACH_BAR_MIN_BODY_PCT", 0.8)
     impulse_two_pct = _env_float("SQUEEZE_OI_IMPULSE_TWO_BAR_MOVE_MIN_PCT", 0.8)
     max_price_drift_pct = _env_float("SQUEEZE_OI_MAX_PRICE_DRIFT_PCT", 2.4)
-    min_oi_points = _env_int("SQUEEZE_OI_MIN_OI_POINTS", 6)
+    min_oi_points = _env_int("SQUEEZE_OI_MIN_OI_POINTS", 8)
     require_oi = _env_bool("SQUEEZE_OI_REQUIRE_OI", True)
     skip_atr_median = _env_bool("SQUEEZE_OI_SKIP_ATR_MEDIAN_CHECK", False)
     breakout_relax_pct = _env_float("SQUEEZE_OI_BREAKOUT_RELAX_PCT", 0.06)
@@ -309,10 +311,12 @@ def evaluate_squeeze_oi_breakout(
         return None
     v2 = float(candles[-2].get("volume", 0) or 0)
     v1 = float(candles[-1].get("volume", 0) or 0)
-    thr_v = vol_mult * med_vol
-    if v2 < thr_v or v1 < thr_v:
+    thr_last = vol_mult * med_vol
+    thr_2nd = vol_mult_2nd * med_vol
+    if v1 < thr_last or v2 < thr_2nd:
         _reject(
-            f"vol_vs_median<{vol_mult}x (med={med_vol:.4g} need>={thr_v:.4g} v[-2]={v2:.4g} v[-1]={v1:.4g})"
+            f"vol_vs_median (need v[-1]>={thr_last:.4g} {vol_mult}x, v[-2]>={thr_2nd:.4g} {vol_mult_2nd}x; "
+            f"med={med_vol:.4g} v[-2]={v2:.4g} v[-1]={v1:.4g})"
         )
         return None
 
@@ -382,7 +386,9 @@ def evaluate_squeeze_oi_breakout(
         "oi_optional": not require_oi,
         "vol_median_pre": med_vol,
         "vol_mult_used": vol_mult,
-        "vol_breakout_min": thr_v,
+        "vol_mult_2nd_used": vol_mult_2nd,
+        "vol_breakout_min_last": thr_last,
+        "vol_breakout_min_2nd": thr_2nd,
         "vol_lb_used": vol_lb,
         "impulse_two_bar_pct": two_bar_pct,
     }
