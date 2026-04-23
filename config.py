@@ -190,6 +190,8 @@ SQUEEZE_OI_HIST_LIMIT = 60
 SQUEEZE_OI_COMPRESS_BARS = 36
 # True — без роста OI сигнала не будет (жёстко). False — только цена/индикаторы (OI в сообщении справочно).
 SQUEEZE_OI_REQUIRE_OI = False
+# Сообщения SQUEEZE+OI в TG удаляются через N сек (меньше спама). 0 = не удалять.
+SQUEEZE_OI_TELEGRAM_DELETE_AFTER_SEC = 60
 
 # Импульс 15m — сильный рост за 1–3 свечи (догон может совпадать с поздним этапом)
 IMPULSE_15M_ENABLED = False

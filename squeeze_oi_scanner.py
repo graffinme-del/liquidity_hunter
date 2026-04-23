@@ -114,6 +114,9 @@ async def run_squeeze_oi_loop() -> None:
     kl_limit = max(120, _cfg_int("SQUEEZE_OI_KLINES_LIMIT", 220))
     oi_limit = max(30, _cfg_int("SQUEEZE_OI_HIST_LIMIT", 96))
     compress_bars = max(1, _cfg_int("SQUEEZE_OI_COMPRESS_BARS", 36))
+    tg_delete_sec = _cfg_int("SQUEEZE_OI_TELEGRAM_DELETE_AFTER_SEC", 60)
+    if tg_delete_sec < 0:
+        tg_delete_sec = 0
 
     if delay_start > 0:
         await asyncio.sleep(delay_start)
@@ -159,7 +162,7 @@ async def run_squeeze_oi_loop() -> None:
                             return
                         ok = await send_telegram(
                             format_squeeze_oi_message(sym, ev),
-                            delete_after_sec=None,
+                            delete_after_sec=tg_delete_sec if tg_delete_sec > 0 else None,
                             chat_id=scid,
                             message_thread_id=stid,
                         )
