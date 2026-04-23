@@ -112,7 +112,8 @@ def format_squeeze_oi_message(symbol: str, ev: dict) -> str:
 Боковик: <b>{float(ev.get('range_pct', 0)):.2f}%</b> по диапазону (~{int(ev.get('compress_bars', 0))}×5m)
 EMA 20/50/100: разброс <b>{float(ev.get('ema_spread_pct', 0)):.2f}%</b>
 MACD hist: <b>{float(ev.get('macd_hist', 0)):.6g}</b> · ATR% <b>{float(ev.get('atr_pre_pct', 0)):.3f}%</b>
-OI: <b>+{float(ev.get('oi_growth_pct', 0)):.2f}%</b> · дрейф в сжатии <b>{float(ev.get('price_drift_compress_pct', 0)):.2f}%</b>
+OI: <b>{float(ev.get('oi_growth_pct', 0)):+.2f}%</b>{' <i>(рост OI не был обязательным фильтром)</i>' if ev.get('oi_optional') else ''}
+Дрейф в сжатии: <b>{float(ev.get('price_drift_compress_pct', 0)):.2f}%</b>
 
 Пробой: close <b>{float(ev.get('breakout_close', 0)):.8g}</b> &gt; верх боковика <b>{float(ev.get('range_high', 0)):.8g}</b>
 

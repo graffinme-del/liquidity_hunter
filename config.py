@@ -188,6 +188,8 @@ SQUEEZE_OI_MIN_QUOTE_VOL_24H = 25_000.0
 SQUEEZE_OI_KLINES_LIMIT = 220
 SQUEEZE_OI_HIST_LIMIT = 60
 SQUEEZE_OI_COMPRESS_BARS = 36
+# True — без роста OI сигнала не будет (жёстко). False — только цена/индикаторы (OI в сообщении справочно).
+SQUEEZE_OI_REQUIRE_OI = False
 
 # Импульс 15m — сильный рост за 1–3 свечи (догон может совпадать с поздним этапом)
 IMPULSE_15M_ENABLED = False

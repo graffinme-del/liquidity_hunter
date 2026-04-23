@@ -30,7 +30,11 @@ def _cfg_bool(name: str, default: bool) -> bool:
     raw = os.getenv(name)
     if raw is not None and str(raw).strip() != "":
         return str(raw).strip().lower() in ("1", "true", "yes", "on")
-    return bool(getattr(config, name, default))
+    try:
+        v = getattr(config, name, default)
+        return bool(v)
+    except Exception:
+        return default
 
 
 def _cfg_int(name: str, default: int) -> int:
@@ -108,7 +112,7 @@ async def run_squeeze_oi_loop() -> None:
     concurrent = max(1, min(15, _cfg_int("SQUEEZE_OI_CONCURRENCY", 6)))
     delay_start = max(0, _cfg_int("SQUEEZE_OI_START_DELAY_SEC", 90))
     kl_limit = max(120, _cfg_int("SQUEEZE_OI_KLINES_LIMIT", 220))
-    oi_limit = max(20, _cfg_int("SQUEEZE_OI_HIST_LIMIT", 60))
+    oi_limit = max(30, _cfg_int("SQUEEZE_OI_HIST_LIMIT", 96))
     compress_bars = max(1, _cfg_int("SQUEEZE_OI_COMPRESS_BARS", 36))
 
     if delay_start > 0:
@@ -147,12 +151,10 @@ async def run_squeeze_oi_loop() -> None:
                         attach_atr14_wilder(c5)
                         oi_s = await client.get_open_interest_hist(sym, "5m", oi_limit)
                         ff: list[str] = []
-                        ev = evaluate_squeeze_oi_breakout(
-                            c5, oi_s, first_fail=ff if dbg else None
-                        )
+                        ev = evaluate_squeeze_oi_breakout(c5, oi_s, first_fail=ff)
                         if ev is None:
                             fail_counts["no_match"] += 1
-                            if dbg and ff:
+                            if ff:
                                 miss_reasons[ff[0]] += 1
                             return
                         ok = await send_telegram(
@@ -170,20 +172,37 @@ async def run_squeeze_oi_loop() -> None:
                                 ev["oi_growth_pct"],
                                 ev["range_pct"],
                             )
+                        else:
+                            log.warning(
+                                "[SQUEEZE_OI] Telegram не принял сообщение для %s "
+                                "(проверь TELEGRAM_* / отдельный SQUEEZE_OI_TELEGRAM_CHAT_ID)",
+                                sym,
+                            )
 
                 await asyncio.gather(*(_one(s) for s in symbols))
 
                 top_fail = sorted(fail_counts.items(), key=lambda x: -x[1])[:6]
+                # Прошли precheck: дальше пошли на evaluate (no_match + успешные TG)
+                passed_bar = fail_counts.get("no_match", 0) + sent_n
                 log.info(
-                    "[SQUEEZE_OI] цикл: %s | пар=%s | TG=%s | отсевы: %s",
+                    "[SQUEEZE_OI] цикл: %s | пар=%s | TG=%s | после precheck≈%s | отсевы: %s",
                     uni_desc,
                     len(symbols),
                     sent_n,
+                    passed_bar,
                     top_fail,
                 )
-                if dbg and miss_reasons:
-                    top_miss = miss_reasons.most_common(12)
-                    log.info("[SQUEEZE_OI] DEBUG первые отсечки после precheck: %s", top_miss)
+                if miss_reasons:
+                    top_miss = miss_reasons.most_common(10)
+                    log.info(
+                        "[SQUEEZE_OI] топ отсечек после precheck (включи SQUEEZE_OI_REQUIRE_OI=0 если часто oi_*): %s",
+                        top_miss,
+                    )
+                elif fail_counts.get("precheck", 0) >= len(symbols) * 0.95:
+                    log.info(
+                        "[SQUEEZE_OI] почти все пары отсеяны на precheck "
+                        "(нужны 2 зелёные 5m подряд + длина ряда) — расширь UNIVERSE / MAX_SYMBOLS"
+                    )
             except asyncio.CancelledError:
                 raise
             except Exception:
