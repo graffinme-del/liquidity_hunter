@@ -11,7 +11,12 @@ import aiohttp
 
 import config
 from data.binance_client import BinanceClient
-from detectors import liquidity_sweep_reversal, liquidity_sweep_continuation, volatility_expansion
+from detectors import (
+    ema20_oi_cvd_cross,
+    liquidity_sweep_continuation,
+    liquidity_sweep_reversal,
+    volatility_expansion,
+)
 from notifier import format_signal
 from orientation import (
     apply_h1_orientation,
@@ -211,6 +216,11 @@ async def run_tick(client: BinanceClient) -> tuple[Optional[dict], float, dict]:
                 _apply_taker_bonus(cand, taker_ratio)
                 if _passes_orientation_pipeline(cand, candles_15m, candles_1h, oi_flow_ctx):
                     candidates.append(cand)
+            cand = ema20_oi_cvd_cross.detect(symbol, candles_15m, candles_1h, atr_pct_1h, oi_flow_ctx)
+            if cand:
+                # This detector already implements the EMA20/OI/CVD gate; applying it again
+                # would only duplicate hints and can reject on a later/inconsistent context.
+                candidates.append(cand)
 
         except Exception as e:
             print(f"[SCANNER] Ошибка {symbol}: {e}")

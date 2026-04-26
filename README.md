@@ -12,6 +12,7 @@
 1. **liquidity_sweep_reversal** — вынос high/low + возврат внутрь → вход в сторону возврата
 2. **liquidity_sweep_continuation** — ложный вынос + импульс в другую сторону
 3. **volatility_expansion** — сжатие → расширение ATR + объёмный пробой
+4. **ema20_oi_cvd_cross** — 15m пересечение EMA20 + рост OI + CVD в сторону входа
 
 ## Установка
 
