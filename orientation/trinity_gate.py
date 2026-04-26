@@ -2,7 +2,7 @@
 Жёсткое выравнивание направления с потоком: EMA20 (15m, последняя закрытая) + ΔOI + CVD (taker-buy vs volume).
 
 LONG: close > EMA20, ΔOI > порога, CVD за окно «растёт» (сумма net во второй половине > первой и > 0).
-SHORT: зеркально.
+SHORT: close < EMA20, ΔOI > порога, CVD за окно «падает» (новый OI открывается в сторону продаж).
 
 Вкл: TRINITY_ORIENT_ENABLED=1 (по умолчанию в коде — 1).
 """
@@ -138,14 +138,14 @@ def apply_trinity_orientation(candidate: dict, candles_15m: list[dict], oi_flow_
         if close_i >= ema_i - eps:
             meta["trinity_reject"] = "close_not_below_ema20"
             return True
-        if oi_chg >= -min_oi:
-            meta["trinity_reject"] = f"oi_not_falling (ΔOI {oi_chg:+.2f}% ≥ {-min_oi})"
+        if oi_chg <= min_oi:
+            meta["trinity_reject"] = f"oi_not_rising (ΔOI {oi_chg:+.2f}% ≤ {min_oi})"
             return True
         if not _cvd_direction_ok(nets_win, half, want_long=False):
             meta["trinity_reject"] = "cvd_not_bearish"
             return True
         tag = (
-            f"Trinity: 15m закрытие ниже EMA{ema_period}, ΔOI {oi_chg:+.2f}%<0, CVD↓ "
+            f"Trinity: 15m закрытие ниже EMA{ema_period}, ΔOI {oi_chg:+.2f}%>0, CVD↓ "
             f"(net {sum(nets_win):.0f} за {window} баров)"
         )
 
