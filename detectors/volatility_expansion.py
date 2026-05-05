@@ -1,6 +1,7 @@
 """
 volatility_expansion: сжатие → расширение ATR + объёмный пробой.
 """
+import os
 from typing import Optional
 
 import config
@@ -22,6 +23,16 @@ def _to_float(x, default: float = 0.0) -> float:
 
 def _atr_pct(candles: list[dict], period: int) -> Optional[float]:
     return atr_pct(candles, period)
+
+
+def _debug_enabled() -> bool:
+    raw = os.getenv("VOL_EXP_DEBUG", "0")
+    return (raw or "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _dbg(msg: str) -> None:
+    if _debug_enabled():
+        print(f"[VOL_EXP] {msg}", flush=True)
 
 
 def detect(
@@ -54,10 +65,14 @@ def detect(
     if atr_now - atr_prev < config.EXP_ATR_MIN_GROWTH_PCT:
         return None
 
-    range_candles = closed[-config.EXP_RANGE_LOOKBACK:]
+    # Базовый диапазон считаем по предыдущим закрытым свечам,
+    # а текущую (сигнальную) проверяем на пробой этого диапазона.
+    if len(closed) < config.EXP_RANGE_LOOKBACK + 1:
+        return None
+    range_candles = closed[-config.EXP_RANGE_LOOKBACK - 1 : -1]
     range_high = max(_to_float(c.get("high")) for c in range_candles)
     range_low = min(_to_float(c.get("low")) for c in range_candles)
-    last_close = _to_float(range_candles[-1].get("close"))
+    last_close = _to_float(closed[-1].get("close"))
     range_pct = (range_high - range_low) / last_close * 100 if last_close > 0 else 100
     if range_pct > config.EXP_MAX_RANGE_PCT:
         return None
@@ -85,6 +100,10 @@ def detect(
         direction = "SHORT"
 
     if direction is None:
+        _dbg(
+            f"{symbol}: no breakout (close={close:.6g}, range={range_low:.6g}-{range_high:.6g}, "
+            f"atr_now={atr_now:.3f}, atr_prev={atr_prev:.3f})"
+        )
         return None
 
     score = config.EXP_BASE_SCORE
@@ -114,7 +133,7 @@ def detect(
         rr = (entry - (tp_zone[0] + tp_zone[1]) / 2) / risk if risk > 0 else 0
         reason = "Долгое затишье, потом объёмный пробой вниз — начало движения"
 
-    return {
+    out = {
         "strategy": "volatility_expansion",
         "symbol": symbol,
         "direction": direction,
@@ -127,3 +146,8 @@ def detect(
         "rr": rr,
         "atr_pct_1h": atr_pct_1h,
     }
+    _dbg(
+        f"{symbol}: SIGNAL {direction} entry={entry:.6g} stop={stop:.6g} "
+        f"rr={rr:.2f} score={score} atr_now={atr_now:.3f} atr_prev={atr_prev:.3f}"
+    )
+    return out

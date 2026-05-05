@@ -52,10 +52,14 @@ async def run_scheduler():
         except Exception as e:
             print(f"[SCHEDULER] Резолвер: {e}")
 
-        report = build_daily_report()
-        await send_telegram(report, parse_mode=None)
-        last_sent_date = now.date()
-        print("[SCHEDULER] Дневной отчёт отправлен")
+        try:
+            report = build_daily_report()
+            await send_telegram(report, parse_mode=None)
+            last_sent_date = now.date()
+            print("[SCHEDULER] Дневной отчёт отправлен")
+        except Exception as e:
+            print(f"[SCHEDULER] Дневной отчёт: {e}")
+            continue
 
         if (
             getattr(config, "PUMP_STATS_AUTO_REPORT", True)
